@@ -35,4 +35,3 @@ class Tester:
             print(f"Test avg loss: {avg_loss:.6f}")
             return avg_loss
 
-        return None
