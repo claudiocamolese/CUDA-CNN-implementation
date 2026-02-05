@@ -5,6 +5,13 @@
 #include <cuda_runtime.h>
 #include <iostream>
 
+/**
+ * @brief Checks the result of a CUDA runtime call and exits on error.
+ *
+ * @param err The cudaError_t returned by a CUDA API call.
+ * @param msg Optional custom message describing the context of the call.
+ */
+
 inline void CudaCheck(cudaError_t err, const char* msg = "") {
     if (err != cudaSuccess) {
         fprintf(stderr, "CUDA error: %s (%s)\n", msg, cudaGetErrorString(err));
@@ -41,18 +48,21 @@ void print_progress(int current, int total) {
  */
 int main(int argc, char* argv[]) {
 
-    float* h_train_images = (float*) malloc(TRAIN_IMAGES * IMAGE_ROWS * IMAGE_COLS * sizeof(float)); 
-    float* h_test_images = (float*) malloc(TEST_IMAGES * IMAGE_ROWS * IMAGE_COLS * sizeof(float));
-    int* h_train_labels = (int*) malloc(TRAIN_IMAGES * sizeof(int));
-    int* h_test_labels = (int*) malloc(TEST_IMAGES * sizeof(int));
+    /*
+        Allocate space for train and test set
+    */
+    float* host_train_images = (float*) malloc(TRAIN_IMAGES * IMAGE_ROWS * IMAGE_COLS * sizeof(float)); 
+    float* host_test_images = (float*) malloc(TEST_IMAGES * IMAGE_ROWS * IMAGE_COLS * sizeof(float));
+    int* host_train_labels = (int*) malloc(TRAIN_IMAGES * sizeof(int));
+    int* host_test_labels = (int*) malloc(TEST_IMAGES * sizeof(int));
 
-    if (!h_train_images || !h_test_images || !h_train_labels || !h_test_labels) {
+    if (!host_train_images || !host_test_images || !host_train_labels || !host_test_labels) {
         printf("Memory allocation failed\n");
         return 1;
     }
 
     /* 
-        Load the dataset
+        Load the dataset, mnist is the default one.
     */
     std::string dataset = "mnist"; 
 
@@ -65,10 +75,10 @@ int main(int argc, char* argv[]) {
     std::string train_labels = "../datasets/" + dataset + "/train-labels.idx1-ubyte";
     std::string test_labels = "../datasets/" + dataset + "/t10k-labels.idx1-ubyte";
 
-    load_image(train_images.c_str(), h_train_images, TRAIN_IMAGES);
-    load_image(test_images.c_str(), h_test_images, TEST_IMAGES);
-    load_labels(train_labels.c_str(), h_train_labels, TRAIN_IMAGES);
-    load_labels(test_labels.c_str(), h_test_labels, TEST_IMAGES);
+    load_image(train_images.c_str(), host_train_images, TRAIN_IMAGES);
+    load_image(test_images.c_str(), host_test_images, TEST_IMAGES);
+    load_labels(train_labels.c_str(), host_train_labels, TRAIN_IMAGES);
+    load_labels(test_labels.c_str(), host_test_labels, TEST_IMAGES);
 
     printf("Network --> (CONV(1, %d, %d), RELU) + (CONV(%d, %d, %d), RELU) + MaxPool(%d) + Flatten + FC + SoftMax\n", FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FIRST_OUTPUT_CHANNELS, SECOND_OUTPUT_CHANNELS, FILTER_SIZE, POOL_SIZE);
     printf("Epochs: %d, Learning rate: %.2f, Batch size: %d\n", EPOCHS, LEARNING_RATE, BATCH_SIZE);
@@ -219,8 +229,8 @@ int main(int argc, char* argv[]) {
             print_progress(batch + 1, NUM_BATCHES);
 
             // Copy on device the batch images and labels
-            CudaCheck(cudaMemcpy(d_train_images, &h_train_images[(batch *BATCH_SIZE) * (IMAGE_ROWS * IMAGE_COLS)], imageBytes, cudaMemcpyHostToDevice));
-            CudaCheck(cudaMemcpy(d_labels, &h_train_labels[batch * BATCH_SIZE], sizeof(int) * BATCH_SIZE, cudaMemcpyHostToDevice));
+            CudaCheck(cudaMemcpy(d_train_images, &host_train_images[(batch *BATCH_SIZE) * (IMAGE_ROWS * IMAGE_COLS)], imageBytes, cudaMemcpyHostToDevice));
+            CudaCheck(cudaMemcpy(d_labels, &host_train_labels[batch * BATCH_SIZE], sizeof(int) * BATCH_SIZE, cudaMemcpyHostToDevice));
 
             /*-----------------
                 FORWARD PASS
@@ -460,10 +470,10 @@ int main(int argc, char* argv[]) {
     for(int b = 0; b < testBatches; b++) {
         // Copia batch di immagini e label sul device
         CudaCheck(cudaMemcpy(d_train_images,
-                &h_test_images[b * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS],
+                &host_test_images[b * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS],
                 BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float), cudaMemcpyHostToDevice));
         CudaCheck(cudaMemcpy(d_labels,
-                &h_test_labels[b * BATCH_SIZE],
+                &host_test_labels[b * BATCH_SIZE],
                 BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice));
 
         int total, grid;
@@ -520,7 +530,7 @@ int main(int argc, char* argv[]) {
         CudaCheck(cudaMemcpy(h_prob, d_prob, BATCH_SIZE * NUM_CLASSES * sizeof(float), cudaMemcpyDeviceToHost));
 
         int* h_lbl = (int*)malloc(BATCH_SIZE * sizeof(int));
-        memcpy(h_lbl, &h_test_labels[b * BATCH_SIZE], BATCH_SIZE * sizeof(int));
+        memcpy(h_lbl, &host_test_labels[b * BATCH_SIZE], BATCH_SIZE * sizeof(int));
 
         // Count correct predictions
         for(int i = 0; i < BATCH_SIZE; i++) {
@@ -552,10 +562,10 @@ int main(int argc, char* argv[]) {
 
 
     // Free memory
-    free(h_train_images);
-    free(h_test_images);
-    free(h_train_labels);
-    free(h_test_labels);
+    free(host_train_images);
+    free(host_test_images);
+    free(host_train_labels);
+    free(host_test_labels);
 
     CudaCheck(cudaFree(d_train_images));
     CudaCheck(cudaFree(d_labels));

@@ -19,8 +19,7 @@ DataLoader considerations:
 - These settings improve training and testing efficiency on GPU without requiring changes to the training loop.
 
 Usage:
-    python main.py --device cuda
-    python main.py --device cpu
+    python main.py --device [cuda, cpu] --dataset [mnist, fashion]
 """
 
 import time

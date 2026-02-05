@@ -2,7 +2,6 @@ from tqdm import tqdm
 import torch
 from torch.nn import CrossEntropyLoss
 
-
 class Tester:
     def __init__(self, test_loader, device):
         """Initialize test loader, device and loss function
