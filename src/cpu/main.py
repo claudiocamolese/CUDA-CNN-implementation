@@ -2,7 +2,9 @@ import time
 import torch
 import argparse
 import os
+import torch
 import random
+import numpy as np
 
 from torchvision import datasets, transforms
 
@@ -11,7 +13,15 @@ from train import Trainer
 
 
 def main(args):
-    random.seed(21)
+    seed = 42
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     device = args.device
     num_workers = max(1, os.cpu_count() // 2)
 
@@ -24,7 +34,7 @@ def main(args):
         ),
         batch_size= 64,      
         shuffle= True,
-        num_workers= num_workers,       
+        num_workers= 2,       
         pin_memory= True)     
 
     trainer = Trainer(epochs=5, lr=1e-2, train_loader= train_loader, device= device)
