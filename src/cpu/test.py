@@ -29,7 +29,6 @@ class Tester:
             pred = model(img)
 
             if self.criterion is not None:
-
                 if isinstance(self.criterion, CrossEntropyLoss):
                     label = label.view(-1).long()
 
@@ -40,10 +39,19 @@ class Tester:
             all_preds.append(pred.cpu())
             all_labels.append(label.cpu())
 
+        # converte tutto in tensori
+        all_preds = torch.cat(all_preds)
+        all_labels = torch.cat(all_labels)
+
+        # loss medio
         avg_loss = running_loss / num_batches if self.criterion is not None else None
         if avg_loss is not None:
             print(f"Test avg loss: {avg_loss:.6f}")
 
-        all_preds = torch.cat(all_preds)
-        all_labels = torch.cat(all_labels)
-        return avg_loss, all_preds, all_labels
+        # Calcolo accuracy
+        predicted_classes = all_preds.argmax(dim=1)
+        correct = (predicted_classes == all_labels).sum().item()
+        total = all_labels.size(0)
+        accuracy = 100 * correct / total
+        print(f"Test accuracy = {accuracy:.2f}%")
+
