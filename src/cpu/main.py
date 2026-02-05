@@ -10,6 +10,7 @@ from torchvision import datasets, transforms
 
 from model import Net
 from train import Trainer
+from test import Tester
 
 
 def main(args):
@@ -23,7 +24,8 @@ def main(args):
     torch.backends.cudnn.benchmark = False
 
     device = args.device
-    num_workers = max(1, os.cpu_count() // 2)
+    epoch = 5
+    lr = 1e-2
 
     train_loader = torch.utils.data.DataLoader(
         datasets.MNIST(
@@ -36,22 +38,45 @@ def main(args):
         shuffle= True,
         num_workers= 2,       
         pin_memory= True)     
+    
+    test_loader = torch.utils.data.DataLoader(
+        datasets.MNIST(
+            './datasets/mnist/',
+            train= False, 
+            download=True,
+            transform=transforms.ToTensor()
+        ),
+        batch_size= 64,      
+        shuffle= False,
+        num_workers= 2,       
+        pin_memory= True)     
 
-    trainer = Trainer(epochs=5, lr=1e-2, train_loader= train_loader, device= device)
 
+    trainer = Trainer(epochs= epoch, lr= lr, train_loader= train_loader, device= device)
+    tester = Tester(test_loader= test_loader, device= device)
     model = Net()
 
     if device == "cuda":
         torch.cuda.synchronize()
     start_time = time.perf_counter()
 
-    trainer.train(model=model)
+    model = trainer.train(model=model)
 
     if device == "cuda":
         torch.cuda.synchronize()
     end_time = time.perf_counter()
 
-    print(f"Training time: {end_time - start_time:.3f} seconds")
+    print(f"Time for training {epoch} is: {end_time - start_time:.3f} s")
+
+    if device == "cuda":
+        torch.cuda.synchronize()
+    start_time = time.perf_counter()
+
+    tester.test(model= model)
+
+    if device == "cuda":
+        torch.cuda.synchronize()
+    end_time = time.perf_counter()
 
 
 if __name__ == "__main__":

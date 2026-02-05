@@ -1,5 +1,5 @@
 from tqdm import tqdm
-import torch
+
 from torch.optim import SGD
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.nn import CrossEntropyLoss
@@ -16,6 +16,7 @@ class Trainer:
 
     def train(self, model):
         model.to(self.device)
+        model.train()
 
         optimizer = SGD(model.parameters(), lr=self.lr)
         scheduler = CosineAnnealingLR(
@@ -25,7 +26,6 @@ class Trainer:
         )
 
         for epoch in range(self.epochs):
-            model.train()
             running_loss = 0.0
 
             loop = tqdm(self.train_loader, desc=f"Epoch [{epoch+1}/{self.epochs}]")
@@ -48,5 +48,7 @@ class Trainer:
             scheduler.step()
             avg_loss = running_loss / len(self.train_loader)
             print(f"Epoch avg loss: {avg_loss:.6f}")
+        
+        return model
 
             
