@@ -4,13 +4,24 @@ from torch.nn import CrossEntropyLoss
 
 
 class Tester:
-    def __init__(self, test_loader, device, criterion=None):
+    def __init__(self, test_loader, device):
+        """Initialize test loader, device and loss function
+
+        Args:
+            test_loader (pytorch.dataloader): TestLoader used during testing
+            device (pytorch.device): cpu or cuda
+        """
         self.test_loader = test_loader
         self.device = device
-        self.criterion = criterion if criterion is not None else CrossEntropyLoss()
+        self.criterion = CrossEntropyLoss()
 
     @torch.no_grad()
     def test(self, model):
+        """Test method
+
+        Args:
+            model (pytorch model): model to be tested
+        """
         model.to(self.device)
         model.eval()
 
@@ -39,16 +50,13 @@ class Tester:
             all_preds.append(pred.cpu())
             all_labels.append(label.cpu())
 
-        # converte tutto in tensori
         all_preds = torch.cat(all_preds)
         all_labels = torch.cat(all_labels)
 
-        # loss medio
         avg_loss = running_loss / num_batches if self.criterion is not None else None
         if avg_loss is not None:
             print(f"Test avg loss: {avg_loss:.6f}")
 
-        # Calcolo accuracy
         predicted_classes = all_preds.argmax(dim=1)
         correct = (predicted_classes == all_labels).sum().item()
         total = all_labels.size(0)

@@ -7,6 +7,14 @@ from torch.nn import CrossEntropyLoss
 
 class Trainer:
     def __init__(self, epochs, lr, train_loader, device):
+        """Initialize training details
+
+        Args:
+            epochs (int): number of training epochs
+            lr (float): learning rate
+            train_loader (pytorch.dataloader): TrainLoader used during training 
+            device (pytorch.device): cpu or cuda
+        """
         self.epochs = epochs
         self.lr = lr
         self.train_loader = train_loader
@@ -15,6 +23,14 @@ class Trainer:
         self.criterion = CrossEntropyLoss()
 
     def train(self, model):
+        """Training method
+
+        Args:
+            model (pytorch model): model to be trained
+
+        Returns:
+            model: model trained
+        """
         model.to(self.device)
         model.train()
 
