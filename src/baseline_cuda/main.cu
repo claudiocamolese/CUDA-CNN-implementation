@@ -476,7 +476,7 @@ int main(int argc, char* argv[]) {
         // Batch loss logging
         // ---------------------------
         epoch_loss /= NUM_BATCHES;
-        print_epoch_end(epoch, EPOCHS, epoch_loss);
+        print_epoch_end(epoch_loss);
     }
 
     cudaEventRecord(stop, 0);
