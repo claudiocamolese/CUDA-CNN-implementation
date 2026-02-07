@@ -242,14 +242,14 @@ void FullyConnectedForward(const float* input_tensor, const float* w, const floa
  *                   (shape: [batch_size])
  * @param outLoss    Pointer to output loss values
  *                   (shape: [batch_size])
- * @param outProb    Pointer to output softmax probabilities
+ * @param PredProb    Pointer to output softmax probabilities
  *                   (shape: [batch_size, num_classes])
  * @param batchSize  Number of samples in the batch
  * @param num_classes Number of classes
  */
 __global__
 void SoftmaxCrossEntropyForward(const float* logits, const int* labels,
-                                        float* outLoss, float* outProb,
+                                        float* outLoss, float* PredProb,
                                         int batchSize, int num_classes)
     {
 
@@ -257,16 +257,16 @@ void SoftmaxCrossEntropyForward(const float* logits, const int* labels,
         if(i >= batchSize) return;
 
         // Find the max in order to avoid NaN / Inf
-        float maxLogit = -1e30f;
+        float thr = -1e30f;
         for(int classIdx = 0; classIdx < num_classes; classIdx++){
             float val = logits[i * num_classes + classIdx];
-            if(val > maxLogit) maxLogit = val;
+            if(val > thr) thr = val;
         }
 
         // Compute the softmax 
         float ExpSum = 0.0f;
         for(int classIdx = 0; classIdx < num_classes; classIdx++){
-            float Exp = expf(logits[i *num_classes + classIdx] - maxLogit);
+            float Exp = expf(logits[i *num_classes + classIdx] - thr);
             ExpSum += Exp;
         }
 
@@ -275,13 +275,13 @@ void SoftmaxCrossEntropyForward(const float* logits, const int* labels,
         float lossVal = 0.0f;
         for(int classIdx = 0; classIdx < num_classes; classIdx++){
             
-            float Exp = expf(logits[i * num_classes + classIdx] - maxLogit);
+            float Exp = expf(logits[i * num_classes + classIdx] - thr);
             float prob = Exp / ExpSum;
             
-            outProb[ i *num_classes + classIdx] = prob;
+            PredProb[ i *num_classes + classIdx] = prob;
             
             if(classIdx == labelIdx){
-                lossVal = -logf(prob + 1e-10f); // avoid numerical instability
+                lossVal = -logf(prob + thr); // avoid numerical instability
             }
         }
 
