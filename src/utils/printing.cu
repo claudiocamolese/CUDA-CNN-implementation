@@ -24,7 +24,7 @@ void print_progress(int current, int total, int epoch, int epochs) {
 }
 
 
-void print_epoch_end(int epoch, int epochs, float avg_loss) {
+void print_epoch_end(float avg_loss) {
     std::cout << " | avg loss = "
               << std::fixed << std::setprecision(6)
               << avg_loss << std::endl;
