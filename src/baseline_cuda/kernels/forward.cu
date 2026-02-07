@@ -24,22 +24,25 @@ void ConvForward(const float* input_tensor, const float* weights, const float* b
     int outRows = inRows - filterSize + 1;
     int outCols = inCols - filterSize + 1;
 
-    // number of all elements
+    // One thread for each output element
     int total = batchSize * outChannels * outRows * outCols;
-
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if(index >= total) return;
 
-    // decode the thread idx in 4D coordinate
-    int batchIdx = index / (outChannels * outRows * outCols);
-    int rem = index % (outChannels * outRows * outCols);
-    int f = rem / (outRows * outCols);
-    int rem2 = rem % (outRows * outCols);
-    int outRow = rem2 / outCols;
-    int outCol = rem2 % outCols;
+    /* 
+        Decode the thread idx in 4D coordinate [B, C, H, W].
+        To undestand which element to compute, first extract the image idx in the batch (batchIdx), then we need to extract
+        the filter idx and the position in the image.
+    */
+    int batchIdx = index / (outChannels * outRows * outCols);  // index of the image in the batch
+    int residual = index % (outChannels * outRows * outCols);
+    int filter = residual / (outRows * outCols);  // index of the filter
+    int residual2 = residual % (outRows * outCols);
+    int outRow = residual2 / outCols; // index in the row dimension
+    int outCol = residual2 % outCols; // index in the col dimension
 
     float val = 0.0f;
-    for(int c=0; c < inChannels; c++){
+    for(int channel= 0; channel < inChannels; channel++){
         for(int kr=0; kr <filterSize; kr++){
             for(int kc=0; kc<filterSize; kc++){
 
@@ -47,17 +50,15 @@ void ConvForward(const float* input_tensor, const float* weights, const float* b
                 int inRow = outRow + kr;
                 int inCol = outCol + kc;
 
-                float inp = input_tensor[batchIdx*(inChannels*inRows*inCols)
-                               + c*(inRows*inCols)
-                               + inRow*inCols + inCol];
-                float wgt = weights[f*(inChannels*filterSize*filterSize)
-                              + c*(filterSize*filterSize)
-                              + kr*filterSize + kc];
-                val += inp * wgt;
+                float input = input_tensor[batchIdx * (inChannels*inRows*inCols) + channel * (inRows*inCols) + inRow * inCols + inCol];
+                float kernel_weight = weights[filter * (inChannels*filterSize*filterSize) + channel * (filterSize*filterSize) + kr * filterSize + kc];
+                
+                // Compute the scalar product between the input window and the kernel 
+                val += input * kernel_weight;
             }
         }
     }
-    val += bias[f];
+    val += bias[filter];
     output_tensor[index] = val;
 }
 

@@ -13,7 +13,7 @@
  *             The array must have size at least `num_images * IMAGE_ROWS * IMAGE_COLS`.
  * @param num_images Number of images to read from the file.
  */
-void load_image(const char* filename, float* data, int num_images){
+void load_images(const char* filename, float* data, int num_images){
     FILE* f = fopen(filename, "rb");
     if (!f) {
         printf("Failed to open file: %s\n", filename);

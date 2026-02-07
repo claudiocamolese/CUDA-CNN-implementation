@@ -1,3 +1,18 @@
+/*
+ * This code is a naive implementation of a deep convolutional neural network.
+ *
+ * It is implemented entirely from scratch without using any deep learning libraries.
+ * The network consists of two convolutional layers with ReLU activations, followed by
+ * a max pooling layer, a flatten operation, a fully connected layer and a softmax
+ * output for classification.
+ *
+ * The forward pass includes convolution, activation, pooling, flattening, and
+ * fully connected computations, while the backward pass computes gradients for
+ * all learnable parameters and propagates them through the network to update
+ * weights and biases using stochastic gradient descent.
+ */
+
+
 #include "config.h"
 #include "utils/load_data.h"
 #include "kernels/forward.h"
@@ -48,6 +63,8 @@ void print_progress(int current, int total) {
  */
 int main(int argc, char* argv[]) {
 
+    srand(21);
+
     /*
         Allocate space for train and test set
     */
@@ -75,8 +92,8 @@ int main(int argc, char* argv[]) {
     std::string train_labels = "../datasets/" + dataset + "/train-labels.idx1-ubyte";
     std::string test_labels = "../datasets/" + dataset + "/t10k-labels.idx1-ubyte";
 
-    load_image(train_images.c_str(), host_train_images, TRAIN_IMAGES);
-    load_image(test_images.c_str(), host_test_images, TEST_IMAGES);
+    load_images(train_images.c_str(), host_train_images, TRAIN_IMAGES);
+    load_images(test_images.c_str(), host_test_images, TEST_IMAGES);
     load_labels(train_labels.c_str(), host_train_labels, TRAIN_IMAGES);
     load_labels(test_labels.c_str(), host_test_labels, TEST_IMAGES);
 
@@ -88,8 +105,8 @@ int main(int argc, char* argv[]) {
     // --------------------
     // Pointers
     // --------------------
-    float* d_train_images;
-    int*   d_labels;
+    float* device_train_images;
+    int*   device_labels;
 
     // Convolutional layers
     float *d_conv1W, *d_conv1B, *d_conv1Out;
@@ -116,10 +133,10 @@ int main(int argc, char* argv[]) {
     size_t imageBytes = BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float);
 
     // --------------------
-    // Dynamic memory allocation
+    // CUDA memory allocation
     // --------------------
-    CudaCheck(cudaMalloc(&d_train_images, BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float)));
-    CudaCheck(cudaMalloc(&d_labels, BATCH_SIZE * sizeof(int)));
+    CudaCheck(cudaMalloc(&device_train_images, BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float)));
+    CudaCheck(cudaMalloc(&device_labels, BATCH_SIZE * sizeof(int)));
 
     CudaCheck(cudaMalloc(&d_conv1W, conv1W_size * sizeof(float)));
     CudaCheck(cudaMalloc(&d_conv1B, FIRST_OUTPUT_CHANNELS * sizeof(float)));
@@ -156,17 +173,15 @@ int main(int argc, char* argv[]) {
     CudaCheck(cudaMalloc(&d_grad_poolOut, BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS * sizeof(float)));
     CudaCheck(cudaMalloc(&d_grad_in, BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float)));
 
-    // --------------------
-    //  He weights initialization on host and copied to device
-    // --------------------
-
-    /*
-        He initialization, is better suited for layers that use ReLU activation functions since it 
-        mitigates the exploding gradient issue.
+    /* ------------------------------------------------------------
+        He weights initialization on host and copied to device
+        ------------------------------------------------------------
+        
+        He initialization, is better suited for layers that use ReLU 
+        activation functions since it mitigates the exploding gradient issue.
         The layer weights are initialized in the range [-limit, +limit] while the bias are initialized to 0.
         The limit is W ~ U(- sqrt(6/n), sqrt(6/n)) where n is the number of input neurons to the layer.
     */
-    srand(21);
 
     // Initilization of the first Conv layer (Conv1)
     float* h_conv1W = (float*)malloc(conv1W_size * sizeof(float)); // layer weights
@@ -221,16 +236,16 @@ int main(int argc, char* argv[]) {
 
     printf("Starting training for %d epochs:\n", EPOCHS);
 
-    for (int epoch=0; epoch < EPOCHS; epoch++){
+    for (int epoch= 0; epoch < EPOCHS; epoch++){
         float epoch_loss = 0.0;
 
-        for (int batch=0; batch < NUM_BATCHES; batch++){
+        for (int batch= 0; batch < NUM_BATCHES; batch++){
             
             print_progress(batch + 1, NUM_BATCHES);
 
             // Copy on device the batch images and labels
-            CudaCheck(cudaMemcpy(d_train_images, &host_train_images[(batch *BATCH_SIZE) * (IMAGE_ROWS * IMAGE_COLS)], imageBytes, cudaMemcpyHostToDevice));
-            CudaCheck(cudaMemcpy(d_labels, &host_train_labels[batch * BATCH_SIZE], sizeof(int) * BATCH_SIZE, cudaMemcpyHostToDevice));
+            CudaCheck(cudaMemcpy(device_train_images, &host_train_images[(batch *BATCH_SIZE) * (IMAGE_ROWS * IMAGE_COLS)], imageBytes, cudaMemcpyHostToDevice));
+            CudaCheck(cudaMemcpy(device_labels, &host_train_labels[batch * BATCH_SIZE], sizeof(int) * BATCH_SIZE, cudaMemcpyHostToDevice));
 
             /*-----------------
                 FORWARD PASS
@@ -239,9 +254,9 @@ int main(int argc, char* argv[]) {
             int total, grid;
 
             // Conv1 -> ReLU
-            total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS;
+            total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS; // total number of elements to be computed
             grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            ConvForward<<<grid, BLOCK_SIZE>>>(d_train_images, d_conv1W, d_conv1B, d_conv1Out,
+            ConvForward<<<grid, BLOCK_SIZE>>>(device_train_images, d_conv1W, d_conv1B, d_conv1Out,
                                             BATCH_SIZE, FIRST_INPUT_CHANNELS, FIRST_OUTPUT_CHANNELS,
                                             IMAGE_ROWS, IMAGE_COLS, FILTER_SIZE);
 
@@ -261,24 +276,28 @@ int main(int argc, char* argv[]) {
             grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
             MaxPoolForward<<<grid, BLOCK_SIZE>>>(d_conv2Out, d_poolOut, d_poolIdx, BATCH_SIZE, SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE);
 
+            // Flatten Layer
             CudaCheck(cudaMemset(d_flat, 0, BATCH_SIZE*FLATTEN_SIZE*sizeof(float)));
             total = BATCH_SIZE*SECOND_OUTPUT_CHANNELS*POOL_OUT_ROWS*POOL_OUT_COLS;
             grid = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
             FlattenForward<<<grid,BLOCK_SIZE>>>(d_poolOut, d_flat, BATCH_SIZE, SECOND_OUTPUT_CHANNELS, POOL_OUT_ROWS, POOL_OUT_COLS);
 
+            // Fully Connected Layer
             total = BATCH_SIZE*NUM_CLASSES;
             grid = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
             FullyConnectedForward<<<grid,BLOCK_SIZE>>>(d_flat, d_fcW, d_fcB, d_fcOut, BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
 
-            grid = (BATCH_SIZE + BLOCK_SIZE - 1)/BLOCK_SIZE;
-            SoftmaxCrossEntropyForward<<<grid, BLOCK_SIZE>>>(d_fcOut, d_labels, d_loss, d_prob, BATCH_SIZE, NUM_CLASSES);
+            // Softmax
+            total = BATCH_SIZE;
+            grid = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
+            SoftmaxCrossEntropyForward<<<grid, BLOCK_SIZE>>>(d_fcOut, device_labels, d_loss, d_prob, BATCH_SIZE, NUM_CLASSES);
             
             // Compute batch loss on host
             float h_loss[BATCH_SIZE];
-            CudaCheck(cudaMemcpy(h_loss, d_loss, BATCH_SIZE*sizeof(float), cudaMemcpyDeviceToHost));
             float batchLoss = 0.0f;
-            for(int i=0; i<BATCH_SIZE; i++)
-                batchLoss += h_loss[i];
+
+            CudaCheck(cudaMemcpy(h_loss, d_loss, BATCH_SIZE*sizeof(float), cudaMemcpyDeviceToHost));
+            for(int i=0; i<BATCH_SIZE; i++) batchLoss += h_loss[i];
             epoch_loss += batchLoss / BATCH_SIZE;
 
 
@@ -286,16 +305,37 @@ int main(int argc, char* argv[]) {
             // BACKWARD PASS
             // ---------------------------
 
+            /*
+                Since the network input is:
+                    Conv1 → ReLU
+                    Conv2 → ReLU
+                    MaxPooling
+                    Flatten Layer
+                    Fully Connected layer
+                    Softmax + CrossEntropy
+                    
+                The backward reverse the network for computing the gradients:
+                    Softmax + CrossEntropy
+                    Fully Connected layer
+                    Flatten Layer
+                    MaxPooling
+                    ReLU
+                    Conv2
+                    ReLU
+                    Conv1
+            */
+
+
             // Softmax + CrossEntropy
             total = BATCH_SIZE;
             grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            SoftmaxCrossEntropyBackward<<<grid, BLOCK_SIZE>>>(d_grad_fcOut, d_prob, d_labels, BATCH_SIZE, NUM_CLASSES);
+            SoftmaxCrossEntropyBackward<<<grid, BLOCK_SIZE>>>(d_grad_fcOut, d_prob, device_labels, BATCH_SIZE, NUM_CLASSES);
 
-            // Fully Connected Layer gradients
+            // Fully Connected Layer gradients (take in consideration both gradients weights and gradients bias)
             CudaCheck(cudaMemset(d_grad_fcW, 0, FLATTEN_SIZE * NUM_CLASSES * sizeof(float)));
             CudaCheck(cudaMemset(d_grad_fcB, 0, NUM_CLASSES * sizeof(float)));
-            int totalParams = FLATTEN_SIZE * NUM_CLASSES + NUM_CLASSES;
-            grid = (totalParams + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            total = FLATTEN_SIZE * NUM_CLASSES + NUM_CLASSES;
+            grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
             FullyConnectedLayerBackward<<<grid, BLOCK_SIZE>>>(d_grad_fcOut, d_flat, d_grad_fcW, d_grad_fcB,
                                                             BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
 
@@ -326,8 +366,8 @@ int main(int argc, char* argv[]) {
            // Conv2 gradients (weights & bias)
             cudaMemset(d_grad_conv2W, 0, conv2W_size * sizeof(float));
             cudaMemset(d_grad_conv2B, 0, SECOND_OUTPUT_CHANNELS * sizeof(float));
-            totalParams = SECOND_OUTPUT_CHANNELS * FIRST_OUTPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + SECOND_OUTPUT_CHANNELS;
-            grid = (totalParams + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            total = SECOND_OUTPUT_CHANNELS * FIRST_OUTPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + SECOND_OUTPUT_CHANNELS;
+            grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
             ConvLayerBackward<<<grid, BLOCK_SIZE>>>(
                 d_conv1Out,          // input to conv2
                 d_grad_conv2Out,     // grad w.r.t conv2 output
@@ -373,10 +413,10 @@ int main(int argc, char* argv[]) {
             // Conv1 gradients (weights & bias)
             cudaMemset(d_grad_conv1W, 0, conv1W_size * sizeof(float));
             cudaMemset(d_grad_conv1B, 0, FIRST_OUTPUT_CHANNELS * sizeof(float));
-            totalParams = FIRST_OUTPUT_CHANNELS * FIRST_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + FIRST_OUTPUT_CHANNELS;
-            grid = (totalParams + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            total = FIRST_OUTPUT_CHANNELS * FIRST_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + FIRST_OUTPUT_CHANNELS;
+            grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
             ConvLayerBackward<<<grid, BLOCK_SIZE>>>(
-                d_train_images,      // input images
+                device_train_images,      // input images
                 d_grad_conv1Out,     // grad w.r.t conv1 output
                 d_grad_conv1W,       // grad weights
                 d_grad_conv1B,       // grad biases
@@ -412,6 +452,13 @@ int main(int argc, char* argv[]) {
             // UPDATE PARAMETERS
             // ---------------------------
 
+            /*
+                The learnable parameters are only in the Convolutional layers and in the Fully connected layers.
+                For both it has to be considered both the weights and the bias.
+
+                The Stochastic Gradient Descent (SGD) algorithm is implemented.
+            */
+
             // Conv1 parameters
             total = conv1W_size;
             grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -438,9 +485,8 @@ int main(int argc, char* argv[]) {
             total = NUM_CLASSES;
             grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
             SGDBackward<<<grid, BLOCK_SIZE>>>(d_fcB, d_grad_fcB, LEARNING_RATE, total);
-
-
         }
+        
         std::cout << "\n";
 
 
@@ -458,7 +504,7 @@ int main(int argc, char* argv[]) {
     printf("Time for training %d epochs is: %.2f s\n", EPOCHS, elapsedTime/1000);
 
     // ---------------------------------------------------------------------------
-    // 5) Evaluate on test set
+    // Evaluate on test set
     // ---------------------------------------------------------------------------
     int correct = 0;
     int testBatches = TEST_IMAGES / BATCH_SIZE;
@@ -469,10 +515,10 @@ int main(int argc, char* argv[]) {
 
     for(int b = 0; b < testBatches; b++) {
         // Copia batch di immagini e label sul device
-        CudaCheck(cudaMemcpy(d_train_images,
+        CudaCheck(cudaMemcpy(device_train_images,
                 &host_test_images[b * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS],
                 BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float), cudaMemcpyHostToDevice));
-        CudaCheck(cudaMemcpy(d_labels,
+        CudaCheck(cudaMemcpy(device_labels,
                 &host_test_labels[b * BATCH_SIZE],
                 BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice));
 
@@ -481,7 +527,7 @@ int main(int argc, char* argv[]) {
         // Conv1 -> ReLU
         total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS;
         grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        ConvForward<<<grid, BLOCK_SIZE>>>(d_train_images, d_conv1W, d_conv1B, d_conv1Out,
+        ConvForward<<<grid, BLOCK_SIZE>>>(device_train_images, d_conv1W, d_conv1B, d_conv1Out,
                                         BATCH_SIZE, FIRST_INPUT_CHANNELS, FIRST_OUTPUT_CHANNELS,
                                         IMAGE_ROWS, IMAGE_COLS, FILTER_SIZE);
 
@@ -519,9 +565,10 @@ int main(int argc, char* argv[]) {
                                                     BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
 
 
-        // Softmax (solo per predizioni)
-        grid = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        SoftmaxCrossEntropyForward<<<grid, BLOCK_SIZE>>>(d_fcOut, d_labels, d_loss, d_prob,
+        // Softmax
+        total = BATCH_SIZE;
+        grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        SoftmaxCrossEntropyForward<<<grid, BLOCK_SIZE>>>(d_fcOut, device_labels, d_loss, d_prob,
                                                         BATCH_SIZE, NUM_CLASSES);
 
 
@@ -567,8 +614,8 @@ int main(int argc, char* argv[]) {
     free(host_train_labels);
     free(host_test_labels);
 
-    CudaCheck(cudaFree(d_train_images));
-    CudaCheck(cudaFree(d_labels));
+    CudaCheck(cudaFree(device_train_images));
+    CudaCheck(cudaFree(device_labels));
     CudaCheck(cudaFree(d_conv1W));
     CudaCheck(cudaFree(d_conv1B));
     CudaCheck(cudaFree(d_conv1Out));
