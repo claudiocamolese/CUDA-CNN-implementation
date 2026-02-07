@@ -167,15 +167,15 @@ void FlattenForward(const float* input_tensor, float* output_tensor,
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx >= total) return;
 
-    int b = idx / (inChannels * inRows * inCols);
-    int rem = idx % (inChannels * inRows * inCols);
-    int c = rem / (inRows * inCols);
-    int rem2 = rem % (inRows * inCols);
-    int r = rem2 / inCols;
-    int col = rem2 % inCols;
+    int batchIdx = idx / (inChannels * inRows * inCols);
+    int residual = idx % (inChannels * inRows * inCols);
+    int filter = residual / (inRows * inCols);
+    int residual2 = residual % (inRows * inCols);
+    int output_row = residual2 / inCols;
+    int output_col = residual2 % inCols;
 
-    int flatIdx = c * (inRows * inCols) + r * inCols + col;
-    output_tensor[b * (inChannels * inRows * inCols) + flatIdx] = input_tensor[idx];
+    int flatIdx = filter * (inRows * inCols) + output_row * inCols + output_col; // allows to pass from [filters][rows][cols] to flatIdx
+    output_tensor[batchIdx * (inChannels * inRows * inCols) + flatIdx] = input_tensor[idx];
 }
 
 
@@ -201,18 +201,23 @@ void FlattenForward(const float* input_tensor, float* output_tensor,
  */
 __global__
 void FullyConnectedForward(const float* input_tensor, const float* w, const float* b, float* output_tensor, int batch_size, int num_classes, int flattent_size){
+    
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     int total = batch_size * num_classes;
-    if (idx>=total) return;
+    if (idx >= total) return;
 
-    int bIdx = idx / num_classes;
-    int c    = idx % num_classes;
+    int batchIdx = idx / num_classes; 
+    int classIdx = idx % num_classes;
 
+    // compute the dot product of the fully connected layer
     float sumVal = 0.0f;
-    for(int k=0; k<flattent_size; k++){
-        sumVal += input_tensor[bIdx*flattent_size + k] * w[k*num_classes + c];
+    for(int k= 0; k < flattent_size; k++){
+        sumVal += input_tensor[batchIdx * flattent_size + k] * w[k * num_classes + classIdx];
     }
-    sumVal += b[c];
+
+    // add the bias 
+    sumVal += b[classIdx];
+
     output_tensor[idx] = sumVal;
 }
 
@@ -221,7 +226,7 @@ void FullyConnectedForward(const float* input_tensor, const float* w, const floa
 /**
  * @brief Softmax + Cross-Entropy forward pass.
  *
- * This kernel computes the softmax probabilities and the cross-entropy loss
+ * This kernel computes the softmax probabilities and the cross entropy loss
  * for each sample in the batch. One thread processes one sample.
  *
  * For numerical stability, the maximum logit is subtracted before computing
@@ -229,7 +234,7 @@ void FullyConnectedForward(const float* input_tensor, const float* w, const floa
  *
  * Outputs:
  * - A probability distribution over classes for each sample
- * - The scalar cross-entropy loss for each sample
+ * - The scalar cross entropy loss for each sample
  *
  * @param logits     Pointer to input logits
  *                   (shape: [batch_size, num_classes])
@@ -247,31 +252,38 @@ void SoftmaxCrossEntropyForward(const float* logits, const int* labels,
                                         float* outLoss, float* outProb,
                                         int batchSize, int num_classes)
     {
-        // 1 thread per sample
+
         int i = blockIdx.x * blockDim.x + threadIdx.x;
         if(i >= batchSize) return;
 
-        // find max for stability
+        // Find the max in order to avoid NaN / Inf
         float maxLogit = -1e30f;
-        for(int c=0; c<num_classes; c++){
-            float val = logits[i * num_classes + c];
+        for(int classIdx = 0; classIdx < num_classes; classIdx++){
+            float val = logits[i * num_classes + classIdx];
             if(val > maxLogit) maxLogit = val;
         }
-        // sum exp
-        float sumExp = 0.0f;
-        for(int c=0; c<num_classes; c++){
-            float ex = expf(logits[i*num_classes + c] - maxLogit);
-            sumExp += ex;
+
+        // Compute the softmax 
+        float ExpSum = 0.0f;
+        for(int classIdx = 0; classIdx < num_classes; classIdx++){
+            float Exp = expf(logits[i *num_classes + classIdx] - maxLogit);
+            ExpSum += Exp;
         }
-        int lbl = labels[i];
+
+        // Compute the predicted label
+        int labelIdx = labels[i];
         float lossVal = 0.0f;
-        for(int c=0; c<num_classes; c++){
-            float ex = expf(logits[i*num_classes + c] - maxLogit);
-            float prob = ex / sumExp;
-            outProb[i*num_classes + c] = prob;
-            if(c == lbl){
-                lossVal = -logf(prob + 1e-10f);
+        for(int classIdx = 0; classIdx < num_classes; classIdx++){
+            
+            float Exp = expf(logits[i * num_classes + classIdx] - maxLogit);
+            float prob = Exp / ExpSum;
+            
+            outProb[ i *num_classes + classIdx] = prob;
+            
+            if(classIdx == labelIdx){
+                lossVal = -logf(prob + 1e-10f); // avoid numerical instability
             }
         }
+
         outLoss[i] = lossVal;
     }
