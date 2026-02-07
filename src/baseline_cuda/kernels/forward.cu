@@ -281,7 +281,7 @@ void SoftmaxCrossEntropyForward(const float* logits, const int* labels,
             PredProb[ i *num_classes + classIdx] = prob;
             
             if(classIdx == labelIdx){
-                lossVal = -logf(prob + thr); // avoid numerical instability
+                lossVal = -logf(prob + 1e-10f); // avoid numerical instability
             }
         }
 
