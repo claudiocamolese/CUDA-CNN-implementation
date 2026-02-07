@@ -38,20 +38,20 @@ void ConvForward(const float* input_tensor, const float* weights, const float* b
     int residual = index % (outChannels * outRows * outCols);
     int filter = residual / (outRows * outCols);  // index of the filter
     int residual2 = residual % (outRows * outCols);
-    int outRow = residual2 / outCols; // index in the row dimension
-    int outCol = residual2 % outCols; // index in the col dimension
+    int output_row = residual2 / outCols; // index in the row dimension
+    int output_col = residual2 % outCols; // index in the col dimension
 
     float val = 0.0f;
     for(int channel= 0; channel < inChannels; channel++){
-        for(int kr=0; kr <filterSize; kr++){
-            for(int kc=0; kc<filterSize; kc++){
+        for(int kernel_row= 0; kernel_row < filterSize; kernel_row++){
+            for(int kernel_col= 0; kernel_col< filterSize; kernel_col++){
 
                 // index position with respect to the kernel position 
-                int inRow = outRow + kr;
-                int inCol = outCol + kc;
+                int inRow = output_row + kernel_row;
+                int inCol = output_col + kernel_col;
 
                 float input = input_tensor[batchIdx * (inChannels*inRows*inCols) + channel * (inRows*inCols) + inRow * inCols + inCol];
-                float kernel_weight = weights[filter * (inChannels*filterSize*filterSize) + channel * (filterSize*filterSize) + kr * filterSize + kc];
+                float kernel_weight = weights[filter * (inChannels*filterSize*filterSize) + channel * (filterSize*filterSize) + kernel_row * filterSize + kernel_col];
                 
                 // Compute the scalar product between the input window and the kernel 
                 val += input * kernel_weight;
@@ -83,7 +83,8 @@ void ReLUForward(float* input_tensor, int n){
 
 
 /**
- * @brief Generic Max Pooling Forward Kernel
+ * @brief Max Pooling Forward Kernel. Take a poolsize x poolsize window of the input, saves the maximum 
+ * value and its position (this will be used for the backword process).
  *
  * @param input         Pointer to input tensor [batch, channels, inRows, inCols]
  * @param output        Pointer to output tensor [batch, channels, outRows, outCols]
@@ -102,33 +103,38 @@ void MaxPoolForward(const float* input, float* output, int* maxIdx,
 {
     int outRows = inRows / poolSize;
     int outCols = inCols / poolSize;
-    int total = batchSize * channels * outRows * outCols;
+    int total = batchSize * channels * outRows * outCols; // total number of output elements
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx >= total) return;
 
-    int b = idx / (channels * outRows * outCols);
-    int rem = idx % (channels * outRows * outCols);
-    int c = rem / (outRows * outCols);
-    int rem2 = rem % (outRows * outCols);
-    int rOut = rem2 / outCols;
-    int cOut = rem2 % outCols;
+    // Decode the thread idx in 4D coordinate [B, C, H, W].
+    int batchIdx = idx / (channels * outRows * outCols);
+    int residual = idx % (channels * outRows * outCols);
+    int filter = residual / (outRows * outCols);
+    int residual2 = residual % (outRows * outCols);
+    int output_row = residual2 / outCols;
+    int output_col = residual2 % outCols;
 
-    int rStart = rOut * poolSize;
-    int cStart = cOut * poolSize;
+    // Every output is a related to the input window [row_start : row_start + poolSize, col_start : col_start + poolSize]
+    int row_start = output_row * poolSize;
+    int col_start = output_col * poolSize;
 
     float maxVal = -1e30f;
     int maxPos = 0;
 
-    for(int i=0; i<poolSize; i++){
-        for(int j=0; j<poolSize; j++){
-            int r = rStart + i;
-            int cIdx = cStart + j;
-            if(r < inRows && cIdx < inCols){
-                int inIdx = b*(channels*inRows*inCols)
-                            + c*(inRows*inCols)
-                            + r*inCols + cIdx;
+    for(int i= 0; i < poolSize; i++){
+        for(int j= 0; j < poolSize; j++){
+            
+            int rowIdx = row_start + i;
+            int colIdx = col_start + j;
+
+            if(rowIdx < inRows && colIdx < inCols){
+
+                int inIdx = batchIdx * (channels*inRows*inCols) + filter * (inRows*inCols) + rowIdx * inCols + colIdx;
                 float val = input[inIdx];
+                
+                // Save the max value and its position
                 if(val > maxVal){
                     maxVal = val;
                     maxPos = inIdx;
