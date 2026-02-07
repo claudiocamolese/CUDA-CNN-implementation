@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(BASELINE_SRC
     src/baseline_cuda/main.cu
     src/utils/load_data.cu
+    src/utils/printing.cu
     src/baseline_cuda/kernels/forward.cu
     src/baseline_cuda/kernels/backward.cu
 )

@@ -15,10 +15,12 @@
 
 #include "config.h"
 #include "utils/load_data.h"
+#include "utils/printing.h"
 #include "kernels/forward.h"
 #include "kernels/backward.h"
 #include <cuda_runtime.h>
 #include <iostream>
+
 
 /**
  * @brief Checks the result of a CUDA runtime call and exits on error.
@@ -34,26 +36,6 @@ inline void CudaCheck(cudaError_t err, const char* msg = "") {
     }
 }
 
-/**
- * @brief Print the progress bar during the training
- * 
- * @param current current batch idx
- * @param total total number of batches
- */
-void print_progress(int current, int total) {
-    const int bar_width = 40;
-    float progress = (float)current / total;
-    int pos = bar_width * progress;
-
-    std::cout << "\r[";
-    for (int i = 0; i < bar_width; ++i) {
-        if (i < pos) std::cout << "=";
-        else if (i == pos) std::cout << ">";
-        else std::cout << " ";
-    }
-    std::cout << "] " << int(progress * 100.0) << "%";
-    std::cout.flush();
-}
 
 /**
  * @brief the code implements the training of a CNN network in CUDA using SGD
@@ -103,7 +85,7 @@ int main(int argc, char* argv[]) {
 
 
     // --------------------
-    // Pointers
+    //  Initialization
     // --------------------
     float* device_train_images;
     int*   device_labels;
@@ -241,7 +223,7 @@ int main(int argc, char* argv[]) {
 
         for (int batch= 0; batch < NUM_BATCHES; batch++){
             
-            print_progress(batch + 1, NUM_BATCHES);
+            print_progress(batch + 1, NUM_BATCHES, epoch, EPOCHS);
 
             // Copy on device the batch images and labels
             CudaCheck(cudaMemcpy(device_train_images, &host_train_images[(batch *BATCH_SIZE) * (IMAGE_ROWS * IMAGE_COLS)], imageBytes, cudaMemcpyHostToDevice));
@@ -494,7 +476,7 @@ int main(int argc, char* argv[]) {
         // Batch loss logging
         // ---------------------------
         epoch_loss /= NUM_BATCHES;
-        printf("Epoch [%d/%d], avg loss = %.6f\n", epoch+1, EPOCHS, epoch_loss);
+        print_epoch_end(epoch, EPOCHS, epoch_loss);
     }
 
     cudaEventRecord(stop, 0);
