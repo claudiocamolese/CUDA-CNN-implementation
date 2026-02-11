@@ -51,8 +51,8 @@ def main(args):
     lr = 1e-2
 
     # Dataloader 
-    train_loader = get_dataloader(args.dataset, train=True)
-    test_loader  = get_dataloader(args.dataset, train=False)
+    train_loader = get_dataloader(args.dataset, train=True, pin_memory= args.pin)
+    test_loader  = get_dataloader(args.dataset, train=False, pin_memory= args.pin)
   
 
     # Initialize trainer, tester and model 
