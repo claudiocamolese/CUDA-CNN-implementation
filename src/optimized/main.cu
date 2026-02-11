@@ -113,9 +113,6 @@ int main(int argc, char *argv[]) {
         CudaCheck(cudaMalloc(&d_labels[i], BATCH_SIZE * sizeof(int)));
     }
 
-    // ---------------------------------------------------------------------------
-    // Create streams and pinned host buffers (triple buffering)
-    // ---------------------------------------------------------------------------
     cudaStream_t stream[NUM_BUFFERS];
     float* h_pinnedImages[NUM_BUFFERS];
     int*   h_pinnedLabels[NUM_BUFFERS];
@@ -778,44 +775,32 @@ int main(int argc, char *argv[]) {
         CudaCheck(cudaStreamDestroy(stream[i]));
     }
 
-    // Conv layers
+
     CudaCheck(cudaFree(d_conv1W));
     CudaCheck(cudaFree(d_conv1B));
     CudaCheck(cudaFree(d_conv1Out));
-
     CudaCheck(cudaFree(d_conv2W));
     CudaCheck(cudaFree(d_conv2B));
     CudaCheck(cudaFree(d_conv2Out));
-
-    // Pooling & Flatten
     CudaCheck(cudaFree(d_poolOut));
     CudaCheck(cudaFree(d_poolIdx));
     CudaCheck(cudaFree(d_flat));
-
-    // Fully connected
     CudaCheck(cudaFree(d_fcW));
     CudaCheck(cudaFree(d_fcB));
     CudaCheck(cudaFree(d_fcOut));
-
-    // Loss & Probabilities
     CudaCheck(cudaFree(d_prob));
     CudaCheck(cudaFree(d_loss));
-
-    // Gradients
     CudaCheck(cudaFree(d_grad_fcOut));
     CudaCheck(cudaFree(d_grad_fcW));
     CudaCheck(cudaFree(d_grad_fcB));
     CudaCheck(cudaFree(d_grad_flat));
-
+    CudaCheck(cudaFree(d_grad_poolOut));
     CudaCheck(cudaFree(d_grad_conv1Out));
     CudaCheck(cudaFree(d_grad_conv1W));
     CudaCheck(cudaFree(d_grad_conv1B));
-
     CudaCheck(cudaFree(d_grad_conv2Out));
     CudaCheck(cudaFree(d_grad_conv2W));
     CudaCheck(cudaFree(d_grad_conv2B));
-
-    CudaCheck(cudaFree(d_grad_poolOut));
     CudaCheck(cudaFree(d_grad_in));
 
     return 0;
