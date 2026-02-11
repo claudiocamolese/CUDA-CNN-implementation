@@ -51,10 +51,10 @@ def main(args):
     epoch = 5
     lr = 1e-2
     print(args.numw)
-    
+
     # Dataloader 
-    train_loader = get_dataloader(args.dataset, train=True, num_workers=args.numw, pin_memory= args.pin)
-    test_loader  = get_dataloader(args.dataset, train=False, num_workers=args.numw, pin_memory= args.pin)
+    train_loader = get_dataloader(dataset_name= args.dataset, train=True, num_workers=args.numw, pin_memory= args.pin)
+    test_loader  = get_dataloader(dataset_name=args.dataset, train=False, num_workers=args.numw, pin_memory= args.pin)
   
 
     # Initialize trainer, tester and model 
