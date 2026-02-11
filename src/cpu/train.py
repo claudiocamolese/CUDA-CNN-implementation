@@ -1,7 +1,7 @@
 from tqdm import tqdm
 
 from torch.optim import SGD
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import StepLR
 from torch.nn import CrossEntropyLoss
 
 
@@ -35,11 +35,7 @@ class Trainer:
         model.train()
 
         optimizer = SGD(model.parameters(), lr=self.lr)
-        scheduler = CosineAnnealingLR(
-            optimizer,
-            T_max=self.epochs,
-            eta_min=1e-5
-        )
+        scheduler = StepLR(optimizer= optimizer, step_size= self.epochs, gamma=0.5)
 
         for epoch in range(self.epochs):
             running_loss = 0.0

@@ -25,12 +25,9 @@ Usage:
 import time
 import torch
 import argparse
-import os
 import torch
 import random
 import numpy as np
-
-from torchvision import datasets, transforms
 
 from model import Net
 from train import Trainer
@@ -93,6 +90,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", choices=["cuda", "cpu"], default="cpu")
     parser.add_argument("--dataset", choices=["mnist", "fashion"], default="mnist")
+    parser.add_argument("--pin", choices=["True", "False"], default="True")
 
     args = parser.parse_args()
     main(args)
