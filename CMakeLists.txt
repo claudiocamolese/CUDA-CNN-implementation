@@ -8,45 +8,45 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # --- BASELINE CUDA ---
 # =========================
 set(BASELINE_SRC
-    src/baseline_cuda/main.cu
+    src/naive/main.cu
     src/utils/load_data.cu
     src/utils/printing.cu
-    src/baseline_cuda/kernels/forward.cu
-    src/baseline_cuda/kernels/backward.cu
+    src/naive/kernels/forward.cu
+    src/naive/kernels/backward.cu
 )
 
-add_executable(cnn_baseline ${BASELINE_SRC})
+add_executable(naive_cnn ${BASELINE_SRC})
 
-set_target_properties(cnn_baseline PROPERTIES
+set_target_properties(naive_cnn PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
 )
 
-target_include_directories(cnn_baseline PRIVATE
+target_include_directories(naive_cnn PRIVATE
     ${CMAKE_SOURCE_DIR}      # config.h
-    ${CMAKE_SOURCE_DIR}/src  # utils/, baseline_cuda/, optimized_cuda/
-    src/baseline_cuda
-    src/baseline_cuda/kernels
+    ${CMAKE_SOURCE_DIR}/src  # utils/, naive/, optimized/
+    src/naive
+    src/naive/kernels
 )
 
 # =========================
 # --- OPTIMIZED CUDA ---
 # =========================
 set(OPTIMIZED_SRC
-    src/optimized_cuda/main.cu
+    src/optimized/main.cu
     src/utils/load_data.cu
-    src/optimized_cuda/kernels/forward.cu
-    src/optimized_cuda/kernels/backward.cu
+    src/optimized/kernels/forward.cu
+    src/optimized/kernels/backward.cu
 )
 
-add_executable(cnn_optimized ${OPTIMIZED_SRC})
+add_executable(optimized_cnn ${OPTIMIZED_SRC})
 
-set_target_properties(cnn_optimized PROPERTIES
+set_target_properties(optimized_cnn PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
 )
 
-target_include_directories(cnn_optimized PRIVATE
+target_include_directories(optimized_cnn PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/src
-    src/optimized_cuda
-    src/optimized_cuda/kernels
+    src/optimized
+    src/optimized/kernels
 )

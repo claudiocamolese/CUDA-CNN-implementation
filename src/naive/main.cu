@@ -12,7 +12,6 @@
  * weights and biases using stochastic gradient descent.
  */
 
-
 #include "config.h"
 #include "utils/load_data.h"
 #include "utils/printing.h"
@@ -37,15 +36,10 @@ inline void CudaCheck(cudaError_t err, const char* msg = "") {
 }
 
 
-/**
- * @brief the code implements the training of a CNN network in CUDA using SGD
- * 
- * @param argc 
- * @param argv use the `mnist` (defualt) or the `fashion` flag for the dataset  
- */
+
 int main(int argc, char* argv[]) {
 
-    srand(21);
+    srand(21); // for reproducibility
 
     /*
         Allocate space for train and test set

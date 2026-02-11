@@ -7,6 +7,8 @@
  * 
  * @param current current batch idx
  * @param total total number of batches
+ * @param epoch current epoch
+ * @param epochs total number of epochs
  */
 void print_progress(int current, int total, int epoch, int epochs) {
     const int bar_width = 40;
@@ -23,7 +25,11 @@ void print_progress(int current, int total, int epoch, int epochs) {
     std::cout.flush();
 }
 
-
+/**
+ * @brief Print in terminal the loss of the current epoch
+ * 
+ * @param avg_loss loss of the epoch
+ */
 void print_epoch_end(float avg_loss) {
     std::cout << " | avg loss = "
               << std::fixed << std::setprecision(6)
