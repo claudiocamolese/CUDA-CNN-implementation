@@ -42,7 +42,7 @@
 #define BATCH_SIZE             64
 #define LEARNING_RATE          0.01f
 #define NUM_BATCHES            TRAIN_IMAGES / BATCH_SIZE
-#define NUM_BUFFERS            6
+#define NUM_BUFFERS            30
 
 // ---------------------------------------------------------------------------------
 // CUDA configuration
