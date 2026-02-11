@@ -50,7 +50,7 @@ def main(args):
     device = args.device
     epoch = 5
     lr = 1e-2
-
+    print(args.numw)
     # Dataloader 
     train_loader = get_dataloader(args.dataset, train=True, num_workers=args.numw, pin_memory= args.pin)
     test_loader  = get_dataloader(args.dataset, train=False, num_workers=args.numw, pin_memory= args.pin)
