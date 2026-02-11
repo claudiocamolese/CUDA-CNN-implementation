@@ -34,6 +34,7 @@ target_include_directories(naive_cnn PRIVATE
 set(OPTIMIZED_SRC
     src/optimized/main.cu
     src/utils/load_data.cu
+    src/utils/printing.cu
     src/optimized/kernels/forward.cu
     src/optimized/kernels/backward.cu
 )
