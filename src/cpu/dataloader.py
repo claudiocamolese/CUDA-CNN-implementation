@@ -40,6 +40,6 @@ def get_dataloader(dataset_name, train=True, batch_size=64, num_workers=2, pin_m
 
     dataset = dataset_cls(root="./datasets", train=train, download=True, transform=transforms.ToTensor())
 
-    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=train, num_workers=num_workers, pin_memory=pin_memory)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=train, pin_memory=pin_memory)
     
     return loader
