@@ -93,7 +93,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", choices=["cuda", "cpu"], default="cpu")
     parser.add_argument("--dataset", choices=["mnist", "fashion"], default="mnist")
     parser.add_argument("--pin", choices=["True", "False"], default="True")
-    parser.add_argument("--numw", choices=["0", "1", "2", "4", "8"], default= os.cpu_count() // 2)
+    parser.add_argument("--numw", choices=["0", "1", "2", "4", "8"], default= 4)
 
     args = parser.parse_args()
     main(args)

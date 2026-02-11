@@ -67,7 +67,7 @@ void maxPoolFlattenKernel(const float* in, float* out,
     int in_r = rOut * poolSize;
     int in_c = cOut * poolSize;
 
-    int convStride = inW;
+    //int convStride = inW;
 
     float maxVal = -1e30f;
     for(int i=0; i<poolSize; i++){

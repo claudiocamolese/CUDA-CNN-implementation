@@ -42,7 +42,7 @@ int main(int argc, char* argv[]) {
     srand(21); // for reproducibility
 
     /*
-        Allocate space for train and test set
+        Allocate space for train and test set, images are 28x28
     */
     float* host_train_images = (float*) malloc(TRAIN_IMAGES * IMAGE_ROWS * IMAGE_COLS * sizeof(float)); 
     float* host_test_images = (float*) malloc(TEST_IMAGES * IMAGE_ROWS * IMAGE_COLS * sizeof(float));
@@ -108,9 +108,9 @@ int main(int argc, char* argv[]) {
     int conv2W_size = SECOND_OUTPUT_CHANNELS * SECOND_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE;
     size_t imageBytes = BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float);
 
-    // --------------------
+    // -------------------------
     // CUDA memory allocation
-    // --------------------
+    // -------------------------
     CudaCheck(cudaMalloc(&device_train_images, BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float)));
     CudaCheck(cudaMalloc(&device_labels, BATCH_SIZE * sizeof(int)));
 

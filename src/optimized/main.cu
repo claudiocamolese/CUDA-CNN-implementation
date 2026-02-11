@@ -1,10 +1,34 @@
+/*
+    This code is an optimized implementation of a deep convolutional neural network.
+
+    It is implemented entirely from scratch without using any deep learning libraries.
+    The network consists of two convolutional layers with ReLU activations, followed by
+    a max pooling layer, a flatten operation, a fully connected layer and a softmax
+    output for classification.
+
+    The forward pass includes convolution, activation, pooling, flattening, and
+    fully connected computations, while the backward pass computes gradients for
+    all learnable parameters and propagates them through the network to update
+    weights and biases using stochastic gradient descent.
+ */
+
+
+
 #include "config.h"
 #include "utils/load_data.h"
+#include "utils/printing.h"
 #include "kernels/forward.h"
 #include "kernels/backward.h"
 #include <cuda_runtime.h>
 #include <iostream>
 
+
+/**
+ * @brief Checks the result of a CUDA runtime call and exits on error.
+ *
+ * @param err The cudaError_t returned by a CUDA API call.
+ * @param msg Optional custom message describing the context of the call.
+ */
 
 inline void CudaCheck(cudaError_t err, const char* msg = "") {
     if (err != cudaSuccess) {
@@ -13,28 +37,13 @@ inline void CudaCheck(cudaError_t err, const char* msg = "") {
     }
 }
 
-void print_progress(int current, int total) {
-    const int bar_width = 40;
-    float progress = (float)current / total;
-    int pos = bar_width * progress;
-
-    std::cout << "\r[";
-    for (int i = 0; i < bar_width; ++i) {
-        if (i < pos) std::cout << "=";
-        else if (i == pos) std::cout << ">";
-        else std::cout << " ";
-    }
-    std::cout << "] " << int(progress * 100.0) << "%";
-    std::cout.flush();
-}
-
-
 int main(int argc, char *argv[]) {
     
+    srand(21); // for reproducibility
 
-    // ---------------------------------------------------------------------------
-    // 1) Load data (host)
-    // ---------------------------------------------------------------------------
+    /*
+        Allocate space for train and test set, images are 28x28  
+    */
     float* h_trainImages = (float*)malloc(TRAIN_IMAGES * IMAGE_ROWS * IMAGE_COLS * sizeof(float));
     float* h_testImages  = (float*)malloc(TEST_IMAGES  * IMAGE_ROWS * IMAGE_COLS * sizeof(float));
     int*   h_trainLabels = (int*)malloc(TRAIN_IMAGES * sizeof(int));
@@ -45,6 +54,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* 
+        Load the dataset, mnist is the default one.
+    */
     std::string dataset = "mnist"; // default
 
     if (argc == 2) {
@@ -65,9 +77,33 @@ int main(int argc, char *argv[]) {
     printf("Epochs: %d, Learning rate: %.2f, Batch size: %d\n", EPOCHS, LEARNING_RATE, BATCH_SIZE);
     printf("Block Size: %d\n", BLOCK_SIZE);
 
-    // ---------------------------------------------------------------------------
-    // 2) Allocate device memory for parameters/activations and triple-buffered batch data
-    // ---------------------------------------------------------------------------
+
+    // --------------------
+    //  Initialization
+    // --------------------
+    
+    // Convolutional layers
+    float *d_conv1W, *d_conv1B, *d_conv1Out;
+    float *d_conv2W, *d_conv2B, *d_conv2Out;
+    
+    // Pooling
+    float *d_poolOut;
+    int   *d_poolIdx;
+    
+    // Flatten + Fully Connected
+    float *d_flat, *d_fcW, *d_fcB, *d_fcOut;
+    
+    // Prob, loss, gradients
+    float *d_prob, *d_loss;
+    float *d_grad_fcW, *d_grad_fcB;
+    float *d_grad_fcOut, *d_grad_flat;
+    float *d_grad_conv1Out, *d_grad_conv1W, *d_grad_conv1B;
+    float *d_grad_conv2Out, *d_grad_conv2W, *d_grad_conv2B;
+    float *d_grad_poolOut, *d_grad_in;
+
+    /* 
+        Triple-buffered batch data
+    */ 
     size_t imageBytesPerBatch = BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float);
     float* d_trainImages[NUM_BUFFERS];
     int*   d_labels[NUM_BUFFERS];
@@ -77,23 +113,26 @@ int main(int argc, char *argv[]) {
         CudaCheck(cudaMalloc(&d_labels[i], BATCH_SIZE * sizeof(int)));
     }
 
-    // Convolution layer sizes
+    // ---------------------------------------------------------------------------
+    // Create streams and pinned host buffers (triple buffering)
+    // ---------------------------------------------------------------------------
+    cudaStream_t stream[NUM_BUFFERS];
+    float* h_pinnedImages[NUM_BUFFERS];
+    int*   h_pinnedLabels[NUM_BUFFERS];
+
+    for (int i = 0; i < NUM_BUFFERS; i++){
+        CudaCheck(cudaStreamCreate(&stream[i]));
+        CudaCheck(cudaMallocHost((void**)&h_pinnedImages[i], imageBytesPerBatch));
+        CudaCheck(cudaMallocHost((void**)&h_pinnedLabels[i], BATCH_SIZE * sizeof(int)));
+    }
+
+    // Dimensions
     int conv1W_size = FIRST_OUTPUT_CHANNELS  * FIRST_INPUT_CHANNELS  * FILTER_SIZE * FILTER_SIZE;
-    int conv2W_size = SECOND_OUTPUT_CHANNELS * SECOND_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE;
+    int conv2W_size = SECOND_OUTPUT_CHANNELS * SECOND_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE;   
 
-    // Device pointers
-    float *d_conv1W, *d_conv1B, *d_conv1Out;
-    float *d_conv2W, *d_conv2B, *d_conv2Out;
-    float *d_poolOut;
-    int   *d_poolIdx;
-    float *d_flat, *d_fcW, *d_fcB, *d_fcOut;
-    float *d_prob, *d_loss;
-    float *d_grad_conv1W, *d_grad_conv1B, *d_grad_conv1Out;
-    float *d_grad_conv2W, *d_grad_conv2B, *d_grad_conv2Out;
-    float *d_grad_poolOut, *d_grad_flat;
-    float *d_grad_fcW, *d_grad_fcB, *d_grad_fcOut, *d_grad_in;
-
-    // Allocazione memoria device
+    // -------------------------
+    // CUDA memory allocation
+    // -------------------------
     CudaCheck(cudaMalloc(&d_conv1W, conv1W_size * sizeof(float)));
     CudaCheck(cudaMalloc(&d_conv1B, FIRST_OUTPUT_CHANNELS * sizeof(float)));
     CudaCheck(cudaMalloc(&d_conv1Out, BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS * sizeof(float)));
@@ -128,26 +167,33 @@ int main(int argc, char *argv[]) {
     CudaCheck(cudaMalloc(&d_grad_poolOut, BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS * sizeof(float)));
     CudaCheck(cudaMalloc(&d_grad_in, BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float)));
 
-    // ---------------------------------------------------------------------------
-    // 3) Initialize weights on host -> copy to device (He)
-    // ---------------------------------------------------------------------------
-    srand(21);
+    
+    /* ------------------------------------------------------------
+        He weights initialization on host and copied to device
+        ------------------------------------------------------------
+        
+        He initialization, is better suited for layers that use ReLU 
+        activation functions since it mitigates the exploding gradient issue.
+        The layer weights are initialized in the range [-limit, +limit] while the bias are initialized to 0.
+        The limit is W ~ U(- sqrt(6/n), sqrt(6/n)) where n is the number of input neurons to the layer.
+    */
 
-    // Conv1
-    float* h_conv1W = (float*)malloc(conv1W_size * sizeof(float));
-    float* h_conv1B = (float*)malloc(FIRST_OUTPUT_CHANNELS * sizeof(float));
-    int fan_in_conv1 = FIRST_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE;
+    // Initilization of the first Conv layer (Conv1) 
+    float* h_conv1W = (float*)malloc(conv1W_size * sizeof(float)); // layer weights
+    float* h_conv1B = (float*)malloc(FIRST_OUTPUT_CHANNELS * sizeof(float)); // bias weights
+    int fan_in_conv1 = FIRST_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE; // total input number for each neuron, use to scale the weights
     auto he_rand_conv1 = [fan_in_conv1]() {
-        float limit = sqrtf(6.0f / fan_in_conv1);
-        return limit * (2.0f * ((float)rand() / RAND_MAX) - 1.0f);
+        float limit = sqrtf(6.0f / fan_in_conv1); // He initilization
+        return limit * (2.0f * ((float)rand() / RAND_MAX) - 1.0f); // casual number in the range [-limit, + limit]
     };
     for (int i = 0; i < conv1W_size; i++) h_conv1W[i] = he_rand_conv1();
     for (int i = 0; i < FIRST_OUTPUT_CHANNELS; i++) h_conv1B[i] = 0.0f;
     CudaCheck(cudaMemcpy(d_conv1W, h_conv1W, conv1W_size * sizeof(float), cudaMemcpyHostToDevice));
     CudaCheck(cudaMemcpy(d_conv1B, h_conv1B, FIRST_OUTPUT_CHANNELS * sizeof(float), cudaMemcpyHostToDevice));
-    free(h_conv1W); free(h_conv1B);
+    free(h_conv1W); 
+    free(h_conv1B);
 
-    // Conv2
+    // Initilization of the second Conv layer (Conv2)
     float* h_conv2W = (float*)malloc(conv2W_size * sizeof(float));
     float* h_conv2B = (float*)malloc(SECOND_OUTPUT_CHANNELS * sizeof(float));
     int fan_in_conv2 = SECOND_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE;
@@ -159,9 +205,10 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < SECOND_OUTPUT_CHANNELS; i++) h_conv2B[i] = 0.0f;
     CudaCheck(cudaMemcpy(d_conv2W, h_conv2W, conv2W_size * sizeof(float), cudaMemcpyHostToDevice));
     CudaCheck(cudaMemcpy(d_conv2B, h_conv2B, SECOND_OUTPUT_CHANNELS * sizeof(float), cudaMemcpyHostToDevice));
-    free(h_conv2W); free(h_conv2B);
+    free(h_conv2W); 
+    free(h_conv2B);
 
-    // Fully connected
+    // Initilization of the FullyConnected layer (FC)
     float* h_fcW = (float*)malloc(FLATTEN_SIZE * NUM_CLASSES * sizeof(float));
     float* h_fcB = (float*)malloc(NUM_CLASSES * sizeof(float));
     int fan_in_fc = FLATTEN_SIZE;
@@ -175,29 +222,16 @@ int main(int argc, char *argv[]) {
     CudaCheck(cudaMemcpy(d_fcB, h_fcB, NUM_CLASSES * sizeof(float), cudaMemcpyHostToDevice));
     free(h_fcW); free(h_fcB);
 
-    // ---------------------------------------------------------------------------
-    // 4) Create streams and pinned host buffers (triple buffering)
-    // ---------------------------------------------------------------------------
-    cudaStream_t stream[NUM_BUFFERS];
-    float* h_pinnedImages[NUM_BUFFERS];
-    int*   h_pinnedLabels[NUM_BUFFERS];
-
-    for (int i = 0; i < NUM_BUFFERS; i++){
-        CudaCheck(cudaStreamCreate(&stream[i]));
-        CudaCheck(cudaMallocHost((void**)&h_pinnedImages[i], imageBytesPerBatch));
-        CudaCheck(cudaMallocHost((void**)&h_pinnedLabels[i], BATCH_SIZE * sizeof(int)));
-    }
-
+    // Record time for training and testing
     cudaEvent_t startEvent, stopEvent;
     CudaCheck(cudaEventCreate(&startEvent));
     CudaCheck(cudaEventCreate(&stopEvent));
     CudaCheck(cudaEventRecord(startEvent, 0));
 
-
-
     printf("Starting training for %d epochs:\n", EPOCHS);
 
     for (int epoch= 0; epoch< EPOCHS; epoch++){
+        
         float epoch_loss = 0.0f;
         int warm_batches = (NUM_BATCHES < NUM_BUFFERS) ? NUM_BATCHES : NUM_BUFFERS;
 
@@ -216,7 +250,7 @@ int main(int argc, char *argv[]) {
         int b = 0;
         for(; b < NUM_BATCHES; b++){
 
-            print_progress(b + 1, NUM_BATCHES);
+            print_progress(b + 1, NUM_BATCHES, epoch, EPOCHS);
 
             int curIdx = b % NUM_BUFFERS;
             int nextIdx = (b + 1) % NUM_BUFFERS;

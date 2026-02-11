@@ -96,10 +96,7 @@ void ReLUForward(float* input_tensor, int n){
  * @param poolSize      Pooling window size (assumes square)
  */
 __global__
-void MaxPoolForward(const float* input, float* output, int* maxIdx,
-                           int batchSize, int channels,
-                           int inRows, int inCols,
-                           int poolSize)
+void MaxPoolForward(const float* input, float* output, int* maxIdx, int batchSize, int channels, int inRows, int inCols, int poolSize)
 {
     int outRows = inRows / poolSize;
     int outCols = inCols / poolSize;
@@ -159,9 +156,7 @@ void MaxPoolForward(const float* input, float* output, int* maxIdx,
  * @param inCols                Number of columns per channel in the input tensor
  */
 __global__
-void FlattenForward(const float* input_tensor, float* output_tensor,
-                              int batchSize, int inChannels,
-                              int inRows, int inCols)
+void FlattenForward(const float* input_tensor, float* output_tensor, int batchSize, int inChannels, int inRows, int inCols)
 {
     int total = batchSize * inChannels * inRows * inCols;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -248,9 +243,7 @@ void FullyConnectedForward(const float* input_tensor, const float* w, const floa
  * @param num_classes Number of classes
  */
 __global__
-void SoftmaxCrossEntropyForward(const float* logits, const int* labels,
-                                        float* outLoss, float* PredProb,
-                                        int batchSize, int num_classes)
+void SoftmaxCrossEntropyForward(const float* logits, const int* labels, float* outLoss, float* PredProb, int batchSize, int num_classes)
     {
 
         int i = blockIdx.x * blockDim.x + threadIdx.x;
