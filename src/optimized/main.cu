@@ -56,8 +56,8 @@ int main(int argc, char *argv[]) {
     std::string train_labels = "../datasets/" + dataset + "/train-labels.idx1-ubyte";
     std::string test_labels = "../datasets/" + dataset + "/t10k-labels.idx1-ubyte";
 
-    load_image(train_images.c_str(), h_trainImages, TRAIN_IMAGES);
-    load_image(test_images.c_str(), h_testImages, TEST_IMAGES);
+    load_images(train_images.c_str(), h_trainImages, TRAIN_IMAGES);
+    load_images(test_images.c_str(), h_testImages, TEST_IMAGES);
     load_labels(train_labels.c_str(), h_trainLabels, TRAIN_IMAGES);
     load_labels(test_labels.c_str(), h_testLabels, TEST_IMAGES);
 
