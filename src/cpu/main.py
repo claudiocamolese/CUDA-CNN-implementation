@@ -28,6 +28,7 @@ import argparse
 import torch
 import random
 import numpy as np
+import os
 
 from model import Net
 from train import Trainer
@@ -51,8 +52,8 @@ def main(args):
     lr = 1e-2
 
     # Dataloader 
-    train_loader = get_dataloader(args.dataset, train=True, pin_memory= args.pin)
-    test_loader  = get_dataloader(args.dataset, train=False, pin_memory= args.pin)
+    train_loader = get_dataloader(args.dataset, train=True, num_workers=args.numw, pin_memory= args.pin)
+    test_loader  = get_dataloader(args.dataset, train=False, num_workers=args.numw, pin_memory= args.pin)
   
 
     # Initialize trainer, tester and model 
@@ -91,6 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", choices=["cuda", "cpu"], default="cpu")
     parser.add_argument("--dataset", choices=["mnist", "fashion"], default="mnist")
     parser.add_argument("--pin", choices=["True", "False"], default="True")
+    parser.add_argument("--numw", choices=["0", "1", "2", "4", "8"], default= os.cpu_count() // 2)
 
     args = parser.parse_args()
     main(args)
