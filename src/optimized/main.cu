@@ -245,16 +245,16 @@ int main(int argc, char *argv[]) {
         float epoch_loss = 0.0f;
         int uploadedBuffers = (NUM_BATCHES < NUM_BUFFERS) ? NUM_BATCHES : NUM_BUFFERS; // correctly manage last batches
 
-        for(int i=0; i < uploadedBuffers ; i++){
+        for(int buffer= 0; buffer < uploadedBuffers ; buffer++){
             
-            int BatchSize = i * BATCH_SIZE * (IMAGE_ROWS * IMAGE_COLS);
+            int BatchSize = buffer * BATCH_SIZE * (IMAGE_ROWS * IMAGE_COLS);
             
-            memcpy(h_pinnedImages[i], &h_trainImages[BatchSize], imageBytesPerBatch);
-            memcpy(h_pinnedLabels[i], &h_trainLabels[i * BATCH_SIZE], BATCH_SIZE * sizeof(int));
+            memcpy(h_pinnedImages[buffer], &h_trainImages[BatchSize], imageBytesPerBatch);
+            memcpy(h_pinnedLabels[buffer], &h_trainLabels[buffer * BATCH_SIZE], BATCH_SIZE * sizeof(int));
             
             // Copy data without blocking the CPU, using the straming CUDA
-            CudaCheck(cudaMemcpyAsync(d_trainImages[i], h_pinnedImages[i], imageBytesPerBatch, cudaMemcpyHostToDevice, stream[i]));
-            CudaCheck(cudaMemcpyAsync(d_labels[i], h_pinnedLabels[i], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice, stream[i]));
+            CudaCheck(cudaMemcpyAsync(d_trainImages[buffer], h_pinnedImages[buffer], imageBytesPerBatch, cudaMemcpyHostToDevice, stream[buffer]));
+            CudaCheck(cudaMemcpyAsync(d_labels[buffer], h_pinnedLabels[buffer], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice, stream[buffer]));
         }
         
         for(int batch = 0; batch < NUM_BATCHES; batch++){
@@ -270,9 +270,7 @@ int main(int argc, char *argv[]) {
             // CONV1 + RELU
             {
             dim3 blockDim(16, 16, 1);
-            dim3 gridDim((CONV1_OUT_COLS + 16 - 1)/16,
-                        (CONV1_OUT_ROWS + 16 - 1)/16,
-                        BATCH_SIZE * FIRST_OUTPUT_CHANNELS);
+            dim3 gridDim((CONV1_OUT_COLS + 16 - 1)/16, (CONV1_OUT_ROWS + 16 - 1)/16, BATCH_SIZE * FIRST_OUTPUT_CHANNELS);
 
             size_t SharedMemorySize = (16 + FILTER_SIZE - 1) * (16 + FILTER_SIZE - 1) * sizeof(float); // to reduce global memory acess
 
@@ -286,9 +284,7 @@ int main(int argc, char *argv[]) {
             // Conv2 + ReLU
             {
             dim3 blockDim(16, 16, 1);
-            dim3 gridDim((CONV2_OUT_COLS + 16 - 1)/16,
-                        (CONV2_OUT_ROWS + 16 - 1)/16,
-                        BATCH_SIZE * SECOND_OUTPUT_CHANNELS);
+            dim3 gridDim((CONV2_OUT_COLS + 16 - 1)/16, (CONV2_OUT_ROWS + 16 - 1)/16, BATCH_SIZE * SECOND_OUTPUT_CHANNELS);
 
             size_t SharedMemorySize = (16 + FILTER_SIZE - 1) * (16 + FILTER_SIZE - 1) * sizeof(float);
 
@@ -314,11 +310,11 @@ int main(int argc, char *argv[]) {
 
             // Fully Connected forward (tiled GEMM)
             {
-            dim3 fcGrid((NUM_CLASSES + 16 - 1)/16, (BATCH_SIZE + 16 - 1)/16);
-            dim3 fcBlock(16, 16, 1);
+            dim3 DimBlock(16, 16, 1);
+            dim3 DimGrid((NUM_CLASSES + 16 - 1)/16, (BATCH_SIZE + 16 - 1)/16);
             int sharedMemBytes = 2 * (16*16) * sizeof(float);
 
-            fcForwardKernel<<<fcGrid, fcBlock, sharedMemBytes, stream[CurrentBuffer]>>>(
+            fcForwardKernel<<<DimGrid, DimBlock, sharedMemBytes, stream[CurrentBuffer]>>>(
                 d_flat, d_fcW, d_fcB, d_fcOut,
                 BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
             }
@@ -403,137 +399,76 @@ int main(int argc, char *argv[]) {
                     stream[CurrentBuffer]
                 );
 
-                int total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS *
-                            POOL_OUT_ROWS * POOL_OUT_COLS;
+                int total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
                 int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
                 maxPoolBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
-                    d_conv2Out,
-                    d_grad_flat,
-                    d_grad_conv2Out,
-                    BATCH_SIZE,
-                    SECOND_OUTPUT_CHANNELS,
-                    CONV2_OUT_ROWS,
-                    CONV2_OUT_COLS,
-                    POOL_SIZE,
-                    POOL_OUT_ROWS,
-                    POOL_OUT_COLS
-                );
+                    d_conv2Out, d_grad_flat,d_grad_conv2Out,
+                    BATCH_SIZE, SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS);
             }
 
             // ---------------------------------------------------------------------------
             // 5) ReLU backward (Conv2)
             // ---------------------------------------------------------------------------
             {
-                int total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS *
-                            CONV2_OUT_ROWS * CONV2_OUT_COLS;
+                int total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * CONV2_OUT_ROWS * CONV2_OUT_COLS;
                 int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
                 reluBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
-                    d_grad_conv2Out,
-                    d_conv2Out,
-                    d_grad_conv2Out,
-                    total
-                );
+                    d_grad_conv2Out, d_conv2Out, d_grad_conv2Out, total);
             }
 
             // ---------------------------------------------------------------------------
-            // 6) Conv2 backward (grad W, B)
+            // Conv2 backward (grad W, B)
             // ---------------------------------------------------------------------------
             {
-                int totalParams =
-                    SECOND_OUTPUT_CHANNELS * SECOND_INPUT_CHANNELS *
-                    FILTER_SIZE * FILTER_SIZE +
-                    SECOND_OUTPUT_CHANNELS;
+                int totalParams = SECOND_OUTPUT_CHANNELS * SECOND_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + SECOND_OUTPUT_CHANNELS;
 
                 int grid = (totalParams + 31) / 32;
 
                 convBackwardWeightKernel<<<grid, 32, 0, stream[CurrentBuffer]>>>(
-                    d_conv1Out,
-                    d_grad_conv2Out,
-                    d_grad_conv2W,
-                    d_grad_conv2B,
-                    BATCH_SIZE,
-                    SECOND_INPUT_CHANNELS,
-                    CONV1_OUT_ROWS,
-                    CONV1_OUT_COLS,
-                    SECOND_OUTPUT_CHANNELS,
-                    FILTER_SIZE,
-                    FILTER_SIZE,
-                    CONV2_OUT_ROWS,
-                    CONV2_OUT_COLS
-                );
+                    d_conv1Out, d_grad_conv2Out, d_grad_conv2W, d_grad_conv2B,
+                    BATCH_SIZE, SECOND_INPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS, SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV2_OUT_ROWS, CONV2_OUT_COLS);
             }
 
             // ---------------------------------------------------------------------------
-            // 7) Conv2 backward (grad input -> d_grad_conv1Out)
+            // Conv2 backward (grad input -> d_grad_conv1Out)
             // ---------------------------------------------------------------------------
             {
                 dim3 block(16, 16, FIRST_OUTPUT_CHANNELS);
                 dim3 grid(BATCH_SIZE);
 
                 convBackwardInputKernel<<<grid, block, 0, stream[CurrentBuffer]>>>(
-                    d_grad_conv2Out,
-                    d_conv2W,
-                    d_grad_conv1Out,
-                    BATCH_SIZE,
-                    FIRST_OUTPUT_CHANNELS,
-                    CONV1_OUT_ROWS,
-                    CONV1_OUT_COLS,
-                    SECOND_OUTPUT_CHANNELS,
-                    FILTER_SIZE,
-                    FILTER_SIZE,
-                    CONV2_OUT_ROWS,
-                    CONV2_OUT_COLS
-                );
+                    d_grad_conv2Out, d_conv2W, d_grad_conv1Out,
+                    BATCH_SIZE, FIRST_OUTPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS, SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV2_OUT_ROWS, CONV2_OUT_COLS);
             }
 
             // ---------------------------------------------------------------------------
-            // 8) ReLU backward (Conv1)
+            // ReLU backward (Conv1)
             // ---------------------------------------------------------------------------
             {
-                int total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS *
-                            CONV1_OUT_ROWS * CONV1_OUT_COLS;
+                int total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS;
                 int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
                 reluBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
-                    d_grad_conv1Out,
-                    d_conv1Out,
-                    d_grad_conv1Out,
-                    total
-                );
+                    d_grad_conv1Out, d_conv1Out, d_grad_conv1Out, total);
             }
 
             // ---------------------------------------------------------------------------
-            // 9) Conv1 backward (grad W, B)
+            // Conv1 backward (grad W, B)
             // ---------------------------------------------------------------------------
             {
-                int totalParams =
-                    FIRST_OUTPUT_CHANNELS * FIRST_INPUT_CHANNELS *
-                    FILTER_SIZE * FILTER_SIZE +
-                    FIRST_OUTPUT_CHANNELS;
+                int totalParams = FIRST_OUTPUT_CHANNELS * FIRST_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + FIRST_OUTPUT_CHANNELS;
 
                 int grid = (totalParams + 31) / 32;
 
                 convBackwardWeightKernel<<<grid, 32, 0, stream[CurrentBuffer]>>>(
-                    d_trainImages[CurrentBuffer],
-                    d_grad_conv1Out,
-                    d_grad_conv1W,
-                    d_grad_conv1B,
-                    BATCH_SIZE,
-                    FIRST_INPUT_CHANNELS,
-                    IMAGE_ROWS,
-                    IMAGE_COLS,
-                    FIRST_OUTPUT_CHANNELS,
-                    FILTER_SIZE,
-                    FILTER_SIZE,
-                    CONV1_OUT_ROWS,
-                    CONV1_OUT_COLS
-                );
+                    d_trainImages[CurrentBuffer],d_grad_conv1Out, d_grad_conv1W, d_grad_conv1B,
+                    BATCH_SIZE, FIRST_INPUT_CHANNELS, IMAGE_ROWS, IMAGE_COLS, FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV1_OUT_ROWS, CONV1_OUT_COLS);
             }
 
             // ---------------------------------------------------------------------------
-            // 10) SGD update (Conv1, Conv2, FC)
+            // SGD update (Conv1, Conv2, FC)
             // ---------------------------------------------------------------------------
             {
                 auto sgd = [&](float* p, float* g, int n){
@@ -557,34 +492,38 @@ int main(int argc, char *argv[]) {
             }
 
             if(batch + 1 < NUM_BATCHES){
+
                 int nextOffset = (batch + 1) * BATCH_SIZE * (IMAGE_ROWS * IMAGE_COLS);
+                
                 memcpy(h_pinnedImages[NextBuffer], &h_trainImages[nextOffset], imageBytesPerBatch);
                 memcpy(h_pinnedLabels[NextBuffer], &h_trainLabels[(batch + 1) * BATCH_SIZE], BATCH_SIZE * sizeof(int));
-                CudaCheck(cudaMemcpyAsync(d_trainImages[NextBuffer], h_pinnedImages[NextBuffer],
-                                           imageBytesPerBatch, cudaMemcpyHostToDevice,
-                                           stream[NextBuffer]));
-                CudaCheck(cudaMemcpyAsync(d_labels[NextBuffer], h_pinnedLabels[NextBuffer],
-                                           BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice,
-                                           stream[NextBuffer]));
+                
+                CudaCheck(cudaMemcpyAsync(d_trainImages[NextBuffer], h_pinnedImages[NextBuffer], imageBytesPerBatch, cudaMemcpyHostToDevice, stream[NextBuffer]));
+                CudaCheck(cudaMemcpyAsync(d_labels[NextBuffer], h_pinnedLabels[NextBuffer], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice, stream[NextBuffer]));
             }
  
             CudaCheck(cudaStreamSynchronize(stream[CurrentBuffer]));
             float h_loss[BATCH_SIZE];
             CudaCheck(cudaMemcpy(h_loss, d_loss, BATCH_SIZE * sizeof(float), cudaMemcpyDeviceToHost));
             float batchLoss = 0.f;
+            
             for (int i = 0; i < BATCH_SIZE; i++){
                 batchLoss += h_loss[i];
             }
+            
             epoch_loss += batchLoss / BATCH_SIZE;
         }
+        
         std::cout << "\n";
         epoch_loss /= NUM_BATCHES;
+        
         printf("Epoch [%d/%d], avg loss=%.6f\n", epoch + 1, EPOCHS, epoch_loss);
     }
  
     for (int i = 0; i < NUM_BUFFERS; i++){
         CudaCheck(cudaStreamSynchronize(stream[i]));
     }
+    
     CudaCheck(cudaEventRecord(stopEvent, 0));
     CudaCheck(cudaEventSynchronize(stopEvent));
     float elapsedTime = 0.f;
@@ -593,7 +532,7 @@ int main(int argc, char *argv[]) {
     printf("Time for training %d epochs is: %.2f s\n", EPOCHS, elapsedTime/1000);
 
     // ---------------------------------------------------------------------------------
-    // 6) Testing Phase: Evaluate trained model on MNIST test data (2 Conv architecture)
+    // Testing Phase: Evaluate trained model on MNIST test data (2 Conv architecture)
     // ---------------------------------------------------------------------------------
 
     cudaEvent_t startEvent_test, stopEvent_test;
@@ -601,8 +540,8 @@ int main(int argc, char *argv[]) {
     CudaCheck(cudaEventCreate(&stopEvent_test));
     CudaCheck(cudaEventRecord(startEvent_test, 0));
     {
-        dim3 fcBlock(16, 16);
-        dim3 fcGrid((NUM_CLASSES + 15) / 16,
+        dim3 DimBlock(16, 16);
+        dim3 DimGrid((NUM_CLASSES + 15) / 16,
                     (BATCH_SIZE + 15) / 16);
         int fcSharedBytes = 2 * 16 * 16 * sizeof(float);
 
@@ -616,17 +555,9 @@ int main(int argc, char *argv[]) {
             // -------------------------------------------------
             // Copy input images + labels
             // -------------------------------------------------
-            CudaCheck(cudaMemcpy(
-                d_trainImages[0],
-                &h_testImages[batch * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS],
-                imageBytesPerBatch,
-                cudaMemcpyHostToDevice));
+            CudaCheck(cudaMemcpy(d_trainImages[0], &h_testImages[batch * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS], imageBytesPerBatch, cudaMemcpyHostToDevice));
 
-            CudaCheck(cudaMemcpy(
-                d_labels[0],
-                &h_testLabels[batch * BATCH_SIZE],
-                BATCH_SIZE * sizeof(int),
-                cudaMemcpyHostToDevice));
+            CudaCheck(cudaMemcpy(d_labels[0], &h_testLabels[batch * BATCH_SIZE], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice));
 
             // -------------------------------------------------
             // Forward pass
@@ -634,98 +565,45 @@ int main(int argc, char *argv[]) {
 
             // ---------- Conv1 + ReLU ----------
             dim3 blockConv1(16, 16);
-            dim3 gridConv1(
-                (CONV1_OUT_COLS + 15) / 16,
-                (CONV1_OUT_ROWS + 15) / 16,
-                BATCH_SIZE * FIRST_OUTPUT_CHANNELS);
+            dim3 gridConv1((CONV1_OUT_COLS + 15) / 16, (CONV1_OUT_ROWS + 15) / 16, BATCH_SIZE * FIRST_OUTPUT_CHANNELS);
 
             convReluKernel<<<gridConv1, blockConv1>>>(
-                d_trainImages[0],
-                d_conv1W,
-                d_conv1B,
-                d_conv1Out,
-                BATCH_SIZE,
-                FIRST_INPUT_CHANNELS,
-                IMAGE_ROWS,
-                IMAGE_COLS,
-                FIRST_OUTPUT_CHANNELS,
-                FILTER_SIZE,
-                FILTER_SIZE,
-                CONV1_OUT_ROWS,
-                CONV1_OUT_COLS,
-                1,
-                0);
+                d_trainImages[0], d_conv1W, d_conv1B, d_conv1Out,
+                BATCH_SIZE, FIRST_INPUT_CHANNELS, IMAGE_ROWS, IMAGE_COLS, FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV1_OUT_ROWS, CONV1_OUT_COLS, 1, 0);
 
             // ---------- Conv2 + ReLU ----------
             dim3 blockConv2(16, 16);
-            dim3 gridConv2(
-                (CONV2_OUT_COLS + 15) / 16,
-                (CONV2_OUT_ROWS + 15) / 16,
-                BATCH_SIZE * SECOND_OUTPUT_CHANNELS);
+            dim3 gridConv2((CONV2_OUT_COLS + 15) / 16, (CONV2_OUT_ROWS + 15) / 16, BATCH_SIZE * SECOND_OUTPUT_CHANNELS);
 
             convReluKernel<<<gridConv2, blockConv2>>>(
-                d_conv1Out,
-                d_conv2W,
-                d_conv2B,
-                d_conv2Out,
-                BATCH_SIZE,
-                SECOND_INPUT_CHANNELS,
-                CONV1_OUT_ROWS,
-                CONV1_OUT_COLS,
-                SECOND_OUTPUT_CHANNELS,
-                FILTER_SIZE,
-                FILTER_SIZE,
-                CONV2_OUT_ROWS,
-                CONV2_OUT_COLS,
-                1,
-                0);
+                d_conv1Out, d_conv2W, d_conv2B, d_conv2Out,
+                BATCH_SIZE, SECOND_INPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS, SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV2_OUT_ROWS, CONV2_OUT_COLS, 1, 0);
 
             // ---------- MaxPool + Flatten ----------
-            int totalFlat = BATCH_SIZE * SECOND_OUTPUT_CHANNELS *
-                            POOL_OUT_ROWS * POOL_OUT_COLS;
+            int totalFlat = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
             int gridFlat = (totalFlat + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
             maxPoolFlattenKernel<<<gridFlat, BLOCK_SIZE>>>(
-                d_conv2Out,
-                d_flat,
-                BATCH_SIZE,
-                SECOND_OUTPUT_CHANNELS,
-                CONV2_OUT_ROWS,
-                CONV2_OUT_COLS,
-                POOL_SIZE,
-                POOL_OUT_ROWS,
-                POOL_OUT_COLS);
+                d_conv2Out,d_flat,
+                BATCH_SIZE, SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS);
 
             // ---------- Fully Connected ----------
-            fcForwardKernel<<<fcGrid, fcBlock, fcSharedBytes>>>(
-                d_flat,
-                d_fcW,
-                d_fcB,
-                d_fcOut,
-                BATCH_SIZE,
-                FLATTEN_SIZE,
-                NUM_CLASSES);
+            fcForwardKernel<<<DimGrid, DimBlock, fcSharedBytes>>>(
+                d_flat, d_fcW,d_fcB, d_fcOut, 
+                BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
 
             // ---------- Softmax ----------
             int gridSoft = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
             softmaxCrossEntropyKernel<<<gridSoft, BLOCK_SIZE>>>(
-                d_fcOut,
-                d_labels[0],
-                d_loss,
-                d_prob,
-                BATCH_SIZE,
-                NUM_CLASSES);
+                d_fcOut, d_labels[0], d_loss, d_prob,
+                BATCH_SIZE, NUM_CLASSES);
 
             CudaCheck(cudaDeviceSynchronize());
 
             // -------------------------------------------------
             // Accuracy
             // -------------------------------------------------
-            CudaCheck(cudaMemcpy(
-                h_prob,
-                d_prob,
-                BATCH_SIZE * NUM_CLASSES * sizeof(float),
-                cudaMemcpyDeviceToHost));
+            CudaCheck(cudaMemcpy(h_prob, d_prob, BATCH_SIZE * NUM_CLASSES * sizeof(float), cudaMemcpyDeviceToHost));
 
             for (int i = 0; i < BATCH_SIZE; i++)
             {
@@ -749,10 +627,12 @@ int main(int argc, char *argv[]) {
 
         float accuracy = (float)correct / (testBatches * BATCH_SIZE);
         printf("Test accuracy = %.2f%%\n", accuracy * 100.0f);
+        
         CudaCheck(cudaEventRecord(stopEvent_test, 0));
         CudaCheck(cudaEventSynchronize(stopEvent_test));
         float elapsedTime_test = 0.f;
         CudaCheck(cudaEventElapsedTime(&elapsedTime_test, startEvent_test, stopEvent_test));
+        
         printf("Time for testing is: %.2f s\n", elapsedTime_test/1000);
 
         free(h_prob);
