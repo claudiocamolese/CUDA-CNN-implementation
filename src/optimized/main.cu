@@ -12,8 +12,6 @@
     weights and biases using stochastic gradient descent.
  */
 
-
-
 #include "config.h"
 #include "utils/load_data.h"
 #include "utils/printing.h"
@@ -102,8 +100,23 @@ int main(int argc, char *argv[]) {
     float *d_grad_poolOut, *d_grad_in;
 
     /* 
-        Triple-buffered batch data
-    */ 
+    Triple-buffered batch data
+
+    Three separate buffers are allocated on both the CPU (pinned memory)
+    and the GPU for batch data (images and labels). The goal is to allow asynchronous 
+    data transfers from CPU to GPU using CUDA streams, so that while the GPU processes 
+    one batch, the CPU can prepare the next batch and copy it into an available buffer, 
+    avoiding idle time.
+
+    - d_trainImages[i] and d_labels[i]: pointers to the buffers in device (GPU) memory
+    - h_pinnedImages[i] and h_pinnedLabels[i]: pointers to the buffers in pinned CPU memory
+    - stream[i]: CUDA stream associated with each buffer, allowing asynchronous memcpy 
+      and kernel execution in parallel without blocking the GPU.
+
+    NUM_BUFFERS = 3 (triple buffering) is used to maximize overlap between data transfers 
+    and computation, improving the training pipeline efficiency. Higher NUM_BUFFERS is not useful.
+*/
+
     size_t imageBytesPerBatch = BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float);
     float* d_trainImages[NUM_BUFFERS];
     int*   d_labels[NUM_BUFFERS];
@@ -230,98 +243,84 @@ int main(int argc, char *argv[]) {
     for (int epoch= 0; epoch< EPOCHS; epoch++){
         
         float epoch_loss = 0.0f;
-        int warm_batches = (NUM_BATCHES < NUM_BUFFERS) ? NUM_BATCHES : NUM_BUFFERS;
+        int uploadedBuffers = (NUM_BATCHES < NUM_BUFFERS) ? NUM_BATCHES : NUM_BUFFERS; // correctly manage last batches
 
-        for(int i=0; i < warm_batches ; i++){
-            int dataOffset = i * BATCH_SIZE * (IMAGE_ROWS * IMAGE_COLS);
-            memcpy(h_pinnedImages[i], &h_trainImages[dataOffset], imageBytesPerBatch);
+        for(int i=0; i < uploadedBuffers ; i++){
+            
+            int BatchSize = i * BATCH_SIZE * (IMAGE_ROWS * IMAGE_COLS);
+            
+            memcpy(h_pinnedImages[i], &h_trainImages[BatchSize], imageBytesPerBatch);
             memcpy(h_pinnedLabels[i], &h_trainLabels[i * BATCH_SIZE], BATCH_SIZE * sizeof(int));
-            CudaCheck(cudaMemcpyAsync(d_trainImages[i], h_pinnedImages[i],
-                                       imageBytesPerBatch, cudaMemcpyHostToDevice,
-                                       stream[i]));
-            CudaCheck(cudaMemcpyAsync(d_labels[i], h_pinnedLabels[i],
-                                       BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice,
-                                       stream[i]));
+            
+            // Copy data without blocking the CPU, using the straming CUDA
+            CudaCheck(cudaMemcpyAsync(d_trainImages[i], h_pinnedImages[i], imageBytesPerBatch, cudaMemcpyHostToDevice, stream[i]));
+            CudaCheck(cudaMemcpyAsync(d_labels[i], h_pinnedLabels[i], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice, stream[i]));
         }
+        
+        for(int batch = 0; batch < NUM_BATCHES; batch++){
 
-        int b = 0;
-        for(; b < NUM_BATCHES; b++){
+            print_progress(batch + 1, NUM_BATCHES, epoch, EPOCHS);
 
-            print_progress(b + 1, NUM_BATCHES, epoch, EPOCHS);
+            int CurrentBuffer = batch % NUM_BUFFERS;
+            int NextBuffer = (batch + 1) % NUM_BUFFERS;
 
-            int curIdx = b % NUM_BUFFERS;
-            int nextIdx = (b + 1) % NUM_BUFFERS;
+            // Before using the current buffer data, must wait that the asynchronize batch copy on the GPU is complete.
+            CudaCheck(cudaStreamSynchronize(stream[CurrentBuffer]));
 
-            // Attendi che la copia dei batch precedenti finisca
-            CudaCheck(cudaStreamSynchronize(stream[curIdx]));
-
-            // --------------------
-            // Conv1 + ReLU
-            // --------------------
+            // CONV1 + RELU
             {
             dim3 blockDim(16, 16, 1);
             dim3 gridDim((CONV1_OUT_COLS + 16 - 1)/16,
                         (CONV1_OUT_ROWS + 16 - 1)/16,
                         BATCH_SIZE * FIRST_OUTPUT_CHANNELS);
 
-            size_t sharedMemSize = (16 + FILTER_SIZE - 1) * (16 + FILTER_SIZE - 1) * sizeof(float);
+            size_t SharedMemorySize = (16 + FILTER_SIZE - 1) * (16 + FILTER_SIZE - 1) * sizeof(float); // to reduce global memory acess
 
-            convReluKernel<<<gridDim, blockDim, sharedMemSize, stream[curIdx]>>>(
-                d_trainImages[curIdx], d_conv1W, d_conv1B, d_conv1Out, 
-                BATCH_SIZE,
-                FIRST_INPUT_CHANNELS, IMAGE_ROWS, IMAGE_COLS,
+            convReluKernel<<<gridDim, blockDim, SharedMemorySize, stream[CurrentBuffer]>>>(
+                d_trainImages[CurrentBuffer], d_conv1W, d_conv1B, d_conv1Out, 
+                BATCH_SIZE, FIRST_INPUT_CHANNELS, IMAGE_ROWS, IMAGE_COLS,
                 FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE,
-                CONV1_OUT_ROWS, CONV1_OUT_COLS
-            );
+                CONV1_OUT_ROWS, CONV1_OUT_COLS);
             }
 
-            // --------------------
             // Conv2 + ReLU
-            // --------------------
             {
             dim3 blockDim(16, 16, 1);
             dim3 gridDim((CONV2_OUT_COLS + 16 - 1)/16,
                         (CONV2_OUT_ROWS + 16 - 1)/16,
                         BATCH_SIZE * SECOND_OUTPUT_CHANNELS);
 
-            size_t sharedMemSize = (16 + FILTER_SIZE - 1) * (16 + FILTER_SIZE - 1) * sizeof(float);
+            size_t SharedMemorySize = (16 + FILTER_SIZE - 1) * (16 + FILTER_SIZE - 1) * sizeof(float);
 
-            convReluKernel<<<gridDim, blockDim, sharedMemSize, stream[curIdx]>>>(
+            convReluKernel<<<gridDim, blockDim, SharedMemorySize, stream[CurrentBuffer]>>>(
                 d_conv1Out, d_conv2W, d_conv2B, d_conv2Out, 
-                BATCH_SIZE,
-                SECOND_INPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS,
+                BATCH_SIZE, SECOND_INPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS,
                 SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE,
-                CONV2_OUT_ROWS, CONV2_OUT_COLS
-            );
+                CONV2_OUT_ROWS, CONV2_OUT_COLS);
             }
 
-            // --------------------
+
             // Max Pooling + Flatten
-            // --------------------
             {
             int totalFlatten = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
             int grid = (totalFlatten + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-            maxPoolFlattenKernel<<<grid, BLOCK_SIZE, 0, stream[curIdx]>>>(
+            maxPoolFlattenKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                 d_conv2Out, d_flat,
-                BATCH_SIZE,
-                SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS,
-                POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS
-            );
+                BATCH_SIZE,SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS,
+                POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS);
             }
 
-            // --------------------
+
             // Fully Connected forward (tiled GEMM)
-            // --------------------
             {
             dim3 fcGrid((NUM_CLASSES + 16 - 1)/16, (BATCH_SIZE + 16 - 1)/16);
             dim3 fcBlock(16, 16, 1);
             int sharedMemBytes = 2 * (16*16) * sizeof(float);
 
-            fcForwardKernel<<<fcGrid, fcBlock, sharedMemBytes, stream[curIdx]>>>(
+            fcForwardKernel<<<fcGrid, fcBlock, sharedMemBytes, stream[CurrentBuffer]>>>(
                 d_flat, d_fcW, d_fcB, d_fcOut,
-                BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES
-            );
+                BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
             }
 
             // --------------------
@@ -331,8 +330,8 @@ int main(int argc, char *argv[]) {
             int grid = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
             size_t sharedMemBytes = NUM_CLASSES * sizeof(float); // per expVals
 
-            softmaxCrossEntropyKernel<<<grid, BLOCK_SIZE, sharedMemBytes, stream[curIdx]>>>(
-                d_fcOut, d_labels[curIdx], d_loss, d_prob,
+            softmaxCrossEntropyKernel<<<grid, BLOCK_SIZE, sharedMemBytes, stream[CurrentBuffer]>>>(
+                d_fcOut, d_labels[CurrentBuffer], d_loss, d_prob,
                 BATCH_SIZE, NUM_CLASSES
             );
             }
@@ -347,10 +346,10 @@ int main(int argc, char *argv[]) {
                 int total = BATCH_SIZE * NUM_CLASSES;
                 int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                softmaxCrossEntropyBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[curIdx]>>>(
+                softmaxCrossEntropyBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                     d_grad_fcOut,
                     d_prob,
-                    d_labels[curIdx],
+                    d_labels[CurrentBuffer],
                     BATCH_SIZE,
                     NUM_CLASSES
                 );
@@ -364,7 +363,7 @@ int main(int argc, char *argv[]) {
                 dim3 blockFC(32, 16);
                 dim3 gridFC((totalParams + 15) / 16);
 
-                fcBackwardGradParamKernel<<<gridFC, blockFC, 0, stream[curIdx]>>>(
+                fcBackwardGradParamKernel<<<gridFC, blockFC, 0, stream[CurrentBuffer]>>>(
                     d_grad_fcOut,
                     d_flat,
                     d_grad_fcW,
@@ -382,7 +381,7 @@ int main(int argc, char *argv[]) {
                 int total = BATCH_SIZE * FLATTEN_SIZE;
                 int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                fcBackwardGradInKernel<<<grid, BLOCK_SIZE, 0, stream[curIdx]>>>(
+                fcBackwardGradInKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                     d_grad_fcOut,
                     d_fcW,
                     d_grad_flat,
@@ -401,14 +400,14 @@ int main(int argc, char *argv[]) {
                     0,
                     BATCH_SIZE * SECOND_OUTPUT_CHANNELS *
                     CONV2_OUT_ROWS * CONV2_OUT_COLS * sizeof(float),
-                    stream[curIdx]
+                    stream[CurrentBuffer]
                 );
 
                 int total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS *
                             POOL_OUT_ROWS * POOL_OUT_COLS;
                 int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                maxPoolBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[curIdx]>>>(
+                maxPoolBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                     d_conv2Out,
                     d_grad_flat,
                     d_grad_conv2Out,
@@ -430,7 +429,7 @@ int main(int argc, char *argv[]) {
                             CONV2_OUT_ROWS * CONV2_OUT_COLS;
                 int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                reluBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[curIdx]>>>(
+                reluBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                     d_grad_conv2Out,
                     d_conv2Out,
                     d_grad_conv2Out,
@@ -449,7 +448,7 @@ int main(int argc, char *argv[]) {
 
                 int grid = (totalParams + 31) / 32;
 
-                convBackwardWeightKernel<<<grid, 32, 0, stream[curIdx]>>>(
+                convBackwardWeightKernel<<<grid, 32, 0, stream[CurrentBuffer]>>>(
                     d_conv1Out,
                     d_grad_conv2Out,
                     d_grad_conv2W,
@@ -473,7 +472,7 @@ int main(int argc, char *argv[]) {
                 dim3 block(16, 16, FIRST_OUTPUT_CHANNELS);
                 dim3 grid(BATCH_SIZE);
 
-                convBackwardInputKernel<<<grid, block, 0, stream[curIdx]>>>(
+                convBackwardInputKernel<<<grid, block, 0, stream[CurrentBuffer]>>>(
                     d_grad_conv2Out,
                     d_conv2W,
                     d_grad_conv1Out,
@@ -497,7 +496,7 @@ int main(int argc, char *argv[]) {
                             CONV1_OUT_ROWS * CONV1_OUT_COLS;
                 int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                reluBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[curIdx]>>>(
+                reluBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                     d_grad_conv1Out,
                     d_conv1Out,
                     d_grad_conv1Out,
@@ -516,8 +515,8 @@ int main(int argc, char *argv[]) {
 
                 int grid = (totalParams + 31) / 32;
 
-                convBackwardWeightKernel<<<grid, 32, 0, stream[curIdx]>>>(
-                    d_trainImages[curIdx],
+                convBackwardWeightKernel<<<grid, 32, 0, stream[CurrentBuffer]>>>(
+                    d_trainImages[CurrentBuffer],
                     d_grad_conv1Out,
                     d_grad_conv1W,
                     d_grad_conv1B,
@@ -539,7 +538,7 @@ int main(int argc, char *argv[]) {
             {
                 auto sgd = [&](float* p, float* g, int n){
                     int grid = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-                    sgdUpdateKernel<<<grid, BLOCK_SIZE, 0, stream[curIdx]>>>(
+                    sgdUpdateKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                         p, g, LEARNING_RATE, n
                     );
                 };
@@ -557,19 +556,19 @@ int main(int argc, char *argv[]) {
                 sgd(d_fcB, d_grad_fcB, NUM_CLASSES);
             }
 
-            if(b + 1 < NUM_BATCHES){
-                int nextOffset = (b + 1) * BATCH_SIZE * (IMAGE_ROWS * IMAGE_COLS);
-                memcpy(h_pinnedImages[nextIdx], &h_trainImages[nextOffset], imageBytesPerBatch);
-                memcpy(h_pinnedLabels[nextIdx], &h_trainLabels[(b + 1) * BATCH_SIZE], BATCH_SIZE * sizeof(int));
-                CudaCheck(cudaMemcpyAsync(d_trainImages[nextIdx], h_pinnedImages[nextIdx],
+            if(batch + 1 < NUM_BATCHES){
+                int nextOffset = (batch + 1) * BATCH_SIZE * (IMAGE_ROWS * IMAGE_COLS);
+                memcpy(h_pinnedImages[NextBuffer], &h_trainImages[nextOffset], imageBytesPerBatch);
+                memcpy(h_pinnedLabels[NextBuffer], &h_trainLabels[(batch + 1) * BATCH_SIZE], BATCH_SIZE * sizeof(int));
+                CudaCheck(cudaMemcpyAsync(d_trainImages[NextBuffer], h_pinnedImages[NextBuffer],
                                            imageBytesPerBatch, cudaMemcpyHostToDevice,
-                                           stream[nextIdx]));
-                CudaCheck(cudaMemcpyAsync(d_labels[nextIdx], h_pinnedLabels[nextIdx],
+                                           stream[NextBuffer]));
+                CudaCheck(cudaMemcpyAsync(d_labels[NextBuffer], h_pinnedLabels[NextBuffer],
                                            BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice,
-                                           stream[nextIdx]));
+                                           stream[NextBuffer]));
             }
  
-            CudaCheck(cudaStreamSynchronize(stream[curIdx]));
+            CudaCheck(cudaStreamSynchronize(stream[CurrentBuffer]));
             float h_loss[BATCH_SIZE];
             CudaCheck(cudaMemcpy(h_loss, d_loss, BATCH_SIZE * sizeof(float), cudaMemcpyDeviceToHost));
             float batchLoss = 0.f;
@@ -612,20 +611,20 @@ int main(int argc, char *argv[]) {
 
         float* h_prob = (float*)malloc(BATCH_SIZE * NUM_CLASSES * sizeof(float));
 
-        for (int b = 0; b < testBatches; b++)
+        for (int batch = 0; batch < testBatches; batch++)
         {
             // -------------------------------------------------
             // Copy input images + labels
             // -------------------------------------------------
             CudaCheck(cudaMemcpy(
                 d_trainImages[0],
-                &h_testImages[b * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS],
+                &h_testImages[batch * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS],
                 imageBytesPerBatch,
                 cudaMemcpyHostToDevice));
 
             CudaCheck(cudaMemcpy(
                 d_labels[0],
-                &h_testLabels[b * BATCH_SIZE],
+                &h_testLabels[batch * BATCH_SIZE],
                 BATCH_SIZE * sizeof(int),
                 cudaMemcpyHostToDevice));
 
@@ -743,7 +742,7 @@ int main(int argc, char *argv[]) {
                     }
                 }
 
-                if (pred == h_testLabels[b * BATCH_SIZE + i])
+                if (pred == h_testLabels[batch * BATCH_SIZE + i])
                     correct++;
             }
         }
