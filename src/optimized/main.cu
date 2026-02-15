@@ -42,12 +42,12 @@ int main(int argc, char *argv[]) {
     /*
         Allocate space for train and test set, images are 28x28  
     */
-    float* h_trainImages = (float*)malloc(TRAIN_IMAGES * IMAGE_ROWS * IMAGE_COLS * sizeof(float));
+    float* host_TrainImages = (float*)malloc(TRAIN_IMAGES * IMAGE_ROWS * IMAGE_COLS * sizeof(float));
     float* h_testImages  = (float*)malloc(TEST_IMAGES  * IMAGE_ROWS * IMAGE_COLS * sizeof(float));
-    int*   h_trainLabels = (int*)malloc(TRAIN_IMAGES * sizeof(int));
+    int*   host_TrainLabels = (int*)malloc(TRAIN_IMAGES * sizeof(int));
     int*   h_testLabels  = (int*)malloc(TEST_IMAGES  * sizeof(int));
 
-    if (!h_trainImages || !h_testImages || !h_trainLabels || !h_testLabels) {
+    if (!host_TrainImages || !h_testImages || !host_TrainLabels || !h_testLabels) {
         printf("Memory allocation failed\n");
         return 1;
     }
@@ -66,9 +66,9 @@ int main(int argc, char *argv[]) {
     std::string train_labels = "../datasets/" + dataset + "/train-labels.idx1-ubyte";
     std::string test_labels = "../datasets/" + dataset + "/t10k-labels.idx1-ubyte";
 
-    load_images(train_images.c_str(), h_trainImages, TRAIN_IMAGES);
+    load_images(train_images.c_str(), host_TrainImages, TRAIN_IMAGES);
     load_images(test_images.c_str(), h_testImages, TEST_IMAGES);
-    load_labels(train_labels.c_str(), h_trainLabels, TRAIN_IMAGES);
+    load_labels(train_labels.c_str(), host_TrainLabels, TRAIN_IMAGES);
     load_labels(test_labels.c_str(), h_testLabels, TEST_IMAGES);
 
     printf("Network --> (CONV(1, %d, %d), RELU) + (CONV(%d, %d, %d), RELU) + MaxPool(%d) + Flatten + FC + SoftMax\n", FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FIRST_OUTPUT_CHANNELS, SECOND_OUTPUT_CHANNELS, FILTER_SIZE, POOL_SIZE);
@@ -108,8 +108,8 @@ int main(int argc, char *argv[]) {
     one batch, the CPU can prepare the next batch and copy it into an available buffer, 
     avoiding idle time.
 
-    - d_trainImages[i] and d_labels[i]: pointers to the buffers in device (GPU) memory
-    - h_pinnedImages[i] and h_pinnedLabels[i]: pointers to the buffers in pinned CPU memory
+    - device_TrainImages[i] and device_Labels[i]: pointers to the buffers in device (GPU) memory
+    - host_PinnedImages[i] and host_PinnedLabels[i]: pointers to the buffers in pinned CPU memory
     - stream[i]: CUDA stream associated with each buffer, allowing asynchronous memcpy 
       and kernel execution in parallel without blocking the GPU.
 
@@ -118,22 +118,22 @@ int main(int argc, char *argv[]) {
 */
 
     size_t imageBytesPerBatch = BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float);
-    float* d_trainImages[NUM_BUFFERS];
-    int*   d_labels[NUM_BUFFERS];
+    float* device_TrainImages[NUM_BUFFERS];
+    int*   device_Labels[NUM_BUFFERS];
 
     for (int i = 0; i < NUM_BUFFERS; i++){
-        CudaCheck(cudaMalloc(&d_trainImages[i], imageBytesPerBatch));
-        CudaCheck(cudaMalloc(&d_labels[i], BATCH_SIZE * sizeof(int)));
+        CudaCheck(cudaMalloc(&device_TrainImages[i], imageBytesPerBatch));
+        CudaCheck(cudaMalloc(&device_Labels[i], BATCH_SIZE * sizeof(int)));
     }
 
     cudaStream_t stream[NUM_BUFFERS];
-    float* h_pinnedImages[NUM_BUFFERS];
-    int*   h_pinnedLabels[NUM_BUFFERS];
+    float* host_PinnedImages[NUM_BUFFERS];
+    int*   host_PinnedLabels[NUM_BUFFERS];
 
     for (int i = 0; i < NUM_BUFFERS; i++){
         CudaCheck(cudaStreamCreate(&stream[i]));
-        CudaCheck(cudaMallocHost((void**)&h_pinnedImages[i], imageBytesPerBatch));
-        CudaCheck(cudaMallocHost((void**)&h_pinnedLabels[i], BATCH_SIZE * sizeof(int)));
+        CudaCheck(cudaMallocHost((void**)&host_PinnedImages[i], imageBytesPerBatch));
+        CudaCheck(cudaMallocHost((void**)&host_PinnedLabels[i], BATCH_SIZE * sizeof(int)));
     }
 
     // Dimensions
@@ -230,7 +230,8 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < NUM_CLASSES; i++) h_fcB[i] = 0.0f;
     CudaCheck(cudaMemcpy(d_fcW, h_fcW, FLATTEN_SIZE * NUM_CLASSES * sizeof(float), cudaMemcpyHostToDevice));
     CudaCheck(cudaMemcpy(d_fcB, h_fcB, NUM_CLASSES * sizeof(float), cudaMemcpyHostToDevice));
-    free(h_fcW); free(h_fcB);
+    free(h_fcW); 
+    free(h_fcB);
 
     // Record time for training and testing
     cudaEvent_t startEvent, stopEvent;
@@ -249,12 +250,12 @@ int main(int argc, char *argv[]) {
             
             int BatchSize = buffer * BATCH_SIZE * (IMAGE_ROWS * IMAGE_COLS);
             
-            memcpy(h_pinnedImages[buffer], &h_trainImages[BatchSize], imageBytesPerBatch);
-            memcpy(h_pinnedLabels[buffer], &h_trainLabels[buffer * BATCH_SIZE], BATCH_SIZE * sizeof(int));
+            memcpy(host_PinnedImages[buffer], &host_TrainImages[BatchSize], imageBytesPerBatch);
+            memcpy(host_PinnedLabels[buffer], &host_TrainLabels[buffer * BATCH_SIZE], BATCH_SIZE * sizeof(int));
             
             // Copy data without blocking the CPU, using the straming CUDA
-            CudaCheck(cudaMemcpyAsync(d_trainImages[buffer], h_pinnedImages[buffer], imageBytesPerBatch, cudaMemcpyHostToDevice, stream[buffer]));
-            CudaCheck(cudaMemcpyAsync(d_labels[buffer], h_pinnedLabels[buffer], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice, stream[buffer]));
+            CudaCheck(cudaMemcpyAsync(device_TrainImages[buffer], host_PinnedImages[buffer], imageBytesPerBatch, cudaMemcpyHostToDevice, stream[buffer]));
+            CudaCheck(cudaMemcpyAsync(device_Labels[buffer], host_PinnedLabels[buffer], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice, stream[buffer]));
         }
         
         for(int batch = 0; batch < NUM_BATCHES; batch++){
@@ -275,10 +276,9 @@ int main(int argc, char *argv[]) {
             size_t SharedMemorySize = (16 + FILTER_SIZE - 1) * (16 + FILTER_SIZE - 1) * sizeof(float); // to reduce global memory acess
 
             convReluKernel<<<gridDim, blockDim, SharedMemorySize, stream[CurrentBuffer]>>>(
-                d_trainImages[CurrentBuffer], d_conv1W, d_conv1B, d_conv1Out, 
+                device_TrainImages[CurrentBuffer], d_conv1W, d_conv1B, d_conv1Out, 
                 BATCH_SIZE, FIRST_INPUT_CHANNELS, IMAGE_ROWS, IMAGE_COLS,
-                FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE,
-                CONV1_OUT_ROWS, CONV1_OUT_COLS);
+                FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV1_OUT_ROWS, CONV1_OUT_COLS);
             }
 
             // Conv2 + ReLU
@@ -291,30 +291,27 @@ int main(int argc, char *argv[]) {
             convReluKernel<<<gridDim, blockDim, SharedMemorySize, stream[CurrentBuffer]>>>(
                 d_conv1Out, d_conv2W, d_conv2B, d_conv2Out, 
                 BATCH_SIZE, SECOND_INPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS,
-                SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE,
-                CONV2_OUT_ROWS, CONV2_OUT_COLS);
+                SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV2_OUT_ROWS, CONV2_OUT_COLS);
             }
 
 
             // Max Pooling + Flatten
             {
             int totalFlatten = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
-            int grid = (totalFlatten + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            int gridDim = (totalFlatten + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-            maxPoolFlattenKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
+            maxPoolFlattenKernel<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                 d_conv2Out, d_flat,
-                BATCH_SIZE,SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS,
-                POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS);
+                BATCH_SIZE,SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS);
             }
-
 
             // Fully Connected forward (tiled GEMM)
             {
-            dim3 DimBlock(16, 16, 1);
-            dim3 DimGrid((NUM_CLASSES + 16 - 1)/16, (BATCH_SIZE + 16 - 1)/16);
+            dim3 blockDim(16, 16, 1);
+            dim3 gridDim((NUM_CLASSES + 16 - 1)/16, (BATCH_SIZE + 16 - 1)/16);
             int sharedMemBytes = 2 * (16*16) * sizeof(float);
 
-            fcForwardKernel<<<DimGrid, DimBlock, sharedMemBytes, stream[CurrentBuffer]>>>(
+            fcForwardKernel<<<gridDim, blockDim, sharedMemBytes, stream[CurrentBuffer]>>>(
                 d_flat, d_fcW, d_fcB, d_fcOut,
                 BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
             }
@@ -323,86 +320,62 @@ int main(int argc, char *argv[]) {
             // Softmax + Cross-Entropy Loss
             // --------------------
             {
-            int grid = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            int gridDim = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
             size_t sharedMemBytes = NUM_CLASSES * sizeof(float); // per expVals
 
-            softmaxCrossEntropyKernel<<<grid, BLOCK_SIZE, sharedMemBytes, stream[CurrentBuffer]>>>(
-                d_fcOut, d_labels[CurrentBuffer], d_loss, d_prob,
+            softmaxCrossEntropyKernel<<<gridDim, BLOCK_SIZE, sharedMemBytes, stream[CurrentBuffer]>>>(
+                d_fcOut, device_Labels[CurrentBuffer], d_loss, d_prob,
                 BATCH_SIZE, NUM_CLASSES
             );
             }
-            // ============================================================================
-            // COMPLETE BACKWARD PASS — insert inside training loop AFTER softmax forward
-            // ============================================================================
 
             // ---------------------------------------------------------------------------
-            // 1) Softmax + Cross-Entropy backward  -> d_grad_fcOut
+            // Softmax + Cross-Entropy backward  -> d_grad_fcOut
             // ---------------------------------------------------------------------------
             {
                 int total = BATCH_SIZE * NUM_CLASSES;
-                int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                int gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                softmaxCrossEntropyBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
-                    d_grad_fcOut,
-                    d_prob,
-                    d_labels[CurrentBuffer],
-                    BATCH_SIZE,
-                    NUM_CLASSES
-                );
+                softmaxCrossEntropyBackwardKernel<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
+                    d_grad_fcOut, d_prob, device_Labels[CurrentBuffer],
+                    BATCH_SIZE, NUM_CLASSES);
             }
 
             // ---------------------------------------------------------------------------
-            // 2) Fully Connected backward (grad W, B)
+            // Fully Connected backward (grad W, B)
             // ---------------------------------------------------------------------------
             {
                 int totalParams = FLATTEN_SIZE * NUM_CLASSES + NUM_CLASSES;
-                dim3 blockFC(32, 16);
-                dim3 gridFC((totalParams + 15) / 16);
+                dim3 blockDim(32, 16);
+                dim3 gridDim((totalParams + 15) / 16);
 
-                fcBackwardGradParamKernel<<<gridFC, blockFC, 0, stream[CurrentBuffer]>>>(
-                    d_grad_fcOut,
-                    d_flat,
-                    d_grad_fcW,
-                    d_grad_fcB,
-                    BATCH_SIZE,
-                    FLATTEN_SIZE,
-                    NUM_CLASSES
-                );
+                fcBackwardGradParamKernel<<<gridDim, blockDim, 0, stream[CurrentBuffer]>>>(
+                    d_grad_fcOut,d_flat, d_grad_fcW, d_grad_fcB,
+                    BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
             }
 
             // ---------------------------------------------------------------------------
-            // 3) Fully Connected backward (grad input -> d_grad_flat)
+            // Fully Connected backward (grad input -> d_grad_flat)
             // ---------------------------------------------------------------------------
             {
                 int total = BATCH_SIZE * FLATTEN_SIZE;
-                int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                int gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                fcBackwardGradInKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
-                    d_grad_fcOut,
-                    d_fcW,
-                    d_grad_flat,
-                    BATCH_SIZE,
-                    FLATTEN_SIZE,
-                    NUM_CLASSES
-                );
+                fcBackwardGradInKernel<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
+                    d_grad_fcOut, d_fcW, d_grad_flat,
+                    BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
             }
 
             // ---------------------------------------------------------------------------
-            // 4) MaxPool backward -> d_grad_conv2Out
+            // MaxPool backward -> d_grad_conv2Out
             // ---------------------------------------------------------------------------
             {
-                cudaMemsetAsync(
-                    d_grad_conv2Out,
-                    0,
-                    BATCH_SIZE * SECOND_OUTPUT_CHANNELS *
-                    CONV2_OUT_ROWS * CONV2_OUT_COLS * sizeof(float),
-                    stream[CurrentBuffer]
-                );
+                cudaMemsetAsync(d_grad_conv2Out, 0, BATCH_SIZE * SECOND_OUTPUT_CHANNELS * CONV2_OUT_ROWS * CONV2_OUT_COLS * sizeof(float), stream[CurrentBuffer]);
 
                 int total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
-                int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                int gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                maxPoolBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
+                maxPoolBackwardKernel<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                     d_conv2Out, d_grad_flat,d_grad_conv2Out,
                     BATCH_SIZE, SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS);
             }
@@ -412,9 +385,9 @@ int main(int argc, char *argv[]) {
             // ---------------------------------------------------------------------------
             {
                 int total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * CONV2_OUT_ROWS * CONV2_OUT_COLS;
-                int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                int gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                reluBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
+                reluBackwardKernel<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                     d_grad_conv2Out, d_conv2Out, d_grad_conv2Out, total);
             }
 
@@ -423,10 +396,9 @@ int main(int argc, char *argv[]) {
             // ---------------------------------------------------------------------------
             {
                 int totalParams = SECOND_OUTPUT_CHANNELS * SECOND_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + SECOND_OUTPUT_CHANNELS;
+                int gridDim = (totalParams + 31) / 32;
 
-                int grid = (totalParams + 31) / 32;
-
-                convBackwardWeightKernel<<<grid, 32, 0, stream[CurrentBuffer]>>>(
+                convBackwardWeightKernel<<<gridDim, 32, 0, stream[CurrentBuffer]>>>(
                     d_conv1Out, d_grad_conv2Out, d_grad_conv2W, d_grad_conv2B,
                     BATCH_SIZE, SECOND_INPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS, SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV2_OUT_ROWS, CONV2_OUT_COLS);
             }
@@ -435,10 +407,10 @@ int main(int argc, char *argv[]) {
             // Conv2 backward (grad input -> d_grad_conv1Out)
             // ---------------------------------------------------------------------------
             {
-                dim3 block(16, 16, FIRST_OUTPUT_CHANNELS);
-                dim3 grid(BATCH_SIZE);
+                dim3 blockDim(16, 16, FIRST_OUTPUT_CHANNELS);
+                dim3 gridDim(BATCH_SIZE);
 
-                convBackwardInputKernel<<<grid, block, 0, stream[CurrentBuffer]>>>(
+                convBackwardInputKernel<<<gridDim, blockDim, 0, stream[CurrentBuffer]>>>(
                     d_grad_conv2Out, d_conv2W, d_grad_conv1Out,
                     BATCH_SIZE, FIRST_OUTPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS, SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV2_OUT_ROWS, CONV2_OUT_COLS);
             }
@@ -448,9 +420,9 @@ int main(int argc, char *argv[]) {
             // ---------------------------------------------------------------------------
             {
                 int total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS;
-                int grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                int gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                reluBackwardKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
+                reluBackwardKernel<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                     d_grad_conv1Out, d_conv1Out, d_grad_conv1Out, total);
             }
 
@@ -459,11 +431,10 @@ int main(int argc, char *argv[]) {
             // ---------------------------------------------------------------------------
             {
                 int totalParams = FIRST_OUTPUT_CHANNELS * FIRST_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + FIRST_OUTPUT_CHANNELS;
+                int gridDim = (totalParams + 31) / 32;
 
-                int grid = (totalParams + 31) / 32;
-
-                convBackwardWeightKernel<<<grid, 32, 0, stream[CurrentBuffer]>>>(
-                    d_trainImages[CurrentBuffer],d_grad_conv1Out, d_grad_conv1W, d_grad_conv1B,
+                convBackwardWeightKernel<<<gridDim, 32, 0, stream[CurrentBuffer]>>>(
+                    device_TrainImages[CurrentBuffer],d_grad_conv1Out, d_grad_conv1W, d_grad_conv1B,
                     BATCH_SIZE, FIRST_INPUT_CHANNELS, IMAGE_ROWS, IMAGE_COLS, FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV1_OUT_ROWS, CONV1_OUT_COLS);
             }
 
@@ -473,9 +444,7 @@ int main(int argc, char *argv[]) {
             {
                 auto sgd = [&](float* p, float* g, int n){
                     int grid = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-                    sgdUpdateKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
-                        p, g, LEARNING_RATE, n
-                    );
+                    sgdUpdateKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(p, g, LEARNING_RATE, n);
                 };
 
                 // Conv1
@@ -495,11 +464,11 @@ int main(int argc, char *argv[]) {
 
                 int nextOffset = (batch + 1) * BATCH_SIZE * (IMAGE_ROWS * IMAGE_COLS);
                 
-                memcpy(h_pinnedImages[NextBuffer], &h_trainImages[nextOffset], imageBytesPerBatch);
-                memcpy(h_pinnedLabels[NextBuffer], &h_trainLabels[(batch + 1) * BATCH_SIZE], BATCH_SIZE * sizeof(int));
+                memcpy(host_PinnedImages[NextBuffer], &host_TrainImages[nextOffset], imageBytesPerBatch);
+                memcpy(host_PinnedLabels[NextBuffer], &host_TrainLabels[(batch + 1) * BATCH_SIZE], BATCH_SIZE * sizeof(int));
                 
-                CudaCheck(cudaMemcpyAsync(d_trainImages[NextBuffer], h_pinnedImages[NextBuffer], imageBytesPerBatch, cudaMemcpyHostToDevice, stream[NextBuffer]));
-                CudaCheck(cudaMemcpyAsync(d_labels[NextBuffer], h_pinnedLabels[NextBuffer], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice, stream[NextBuffer]));
+                CudaCheck(cudaMemcpyAsync(device_TrainImages[NextBuffer], host_PinnedImages[NextBuffer], imageBytesPerBatch, cudaMemcpyHostToDevice, stream[NextBuffer]));
+                CudaCheck(cudaMemcpyAsync(device_Labels[NextBuffer], host_PinnedLabels[NextBuffer], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice, stream[NextBuffer]));
             }
  
             CudaCheck(cudaStreamSynchronize(stream[CurrentBuffer]));
@@ -531,23 +500,21 @@ int main(int argc, char *argv[]) {
 
     printf("Time for training %d epochs is: %.2f s\n", EPOCHS, elapsedTime/1000);
 
-    // ---------------------------------------------------------------------------------
-    // Testing Phase: Evaluate trained model on MNIST test data (2 Conv architecture)
-    // ---------------------------------------------------------------------------------
+    // -----------------
+    // Testing Phase
+    // -----------------
 
     cudaEvent_t startEvent_test, stopEvent_test;
     CudaCheck(cudaEventCreate(&startEvent_test));
     CudaCheck(cudaEventCreate(&stopEvent_test));
     CudaCheck(cudaEventRecord(startEvent_test, 0));
     {
-        dim3 DimBlock(16, 16);
-        dim3 DimGrid((NUM_CLASSES + 15) / 16,
-                    (BATCH_SIZE + 15) / 16);
-        int fcSharedBytes = 2 * 16 * 16 * sizeof(float);
+        dim3 blockDim(16, 16);
+        dim3 gridDim((NUM_CLASSES + 15) / 16, (BATCH_SIZE + 15) / 16);
 
+        int fcSharedBytes = 2 * 16 * 16 * sizeof(float);
         int correct = 0;
         int testBatches = TEST_IMAGES / BATCH_SIZE;
-
         float* h_prob = (float*)malloc(BATCH_SIZE * NUM_CLASSES * sizeof(float));
 
         for (int batch = 0; batch < testBatches; batch++)
@@ -555,9 +522,9 @@ int main(int argc, char *argv[]) {
             // -------------------------------------------------
             // Copy input images + labels
             // -------------------------------------------------
-            CudaCheck(cudaMemcpy(d_trainImages[0], &h_testImages[batch * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS], imageBytesPerBatch, cudaMemcpyHostToDevice));
+            CudaCheck(cudaMemcpy(device_TrainImages[0], &h_testImages[batch * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS], imageBytesPerBatch, cudaMemcpyHostToDevice));
 
-            CudaCheck(cudaMemcpy(d_labels[0], &h_testLabels[batch * BATCH_SIZE], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice));
+            CudaCheck(cudaMemcpy(device_Labels[0], &h_testLabels[batch * BATCH_SIZE], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice));
 
             // -------------------------------------------------
             // Forward pass
@@ -568,7 +535,7 @@ int main(int argc, char *argv[]) {
             dim3 gridConv1((CONV1_OUT_COLS + 15) / 16, (CONV1_OUT_ROWS + 15) / 16, BATCH_SIZE * FIRST_OUTPUT_CHANNELS);
 
             convReluKernel<<<gridConv1, blockConv1>>>(
-                d_trainImages[0], d_conv1W, d_conv1B, d_conv1Out,
+                device_TrainImages[0], d_conv1W, d_conv1B, d_conv1Out,
                 BATCH_SIZE, FIRST_INPUT_CHANNELS, IMAGE_ROWS, IMAGE_COLS, FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV1_OUT_ROWS, CONV1_OUT_COLS, 1, 0);
 
             // ---------- Conv2 + ReLU ----------
@@ -588,14 +555,14 @@ int main(int argc, char *argv[]) {
                 BATCH_SIZE, SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS);
 
             // ---------- Fully Connected ----------
-            fcForwardKernel<<<DimGrid, DimBlock, fcSharedBytes>>>(
+            fcForwardKernel<<<gridDim, blockDim, fcSharedBytes>>>(
                 d_flat, d_fcW,d_fcB, d_fcOut, 
                 BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
 
             // ---------- Softmax ----------
             int gridSoft = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
             softmaxCrossEntropyKernel<<<gridSoft, BLOCK_SIZE>>>(
-                d_fcOut, d_labels[0], d_loss, d_prob,
+                d_fcOut, device_Labels[0], d_loss, d_prob,
                 BATCH_SIZE, NUM_CLASSES);
 
             CudaCheck(cudaDeviceSynchronize());
@@ -641,16 +608,16 @@ int main(int argc, char *argv[]) {
     // ---------------------------------------------------------------------------------
     // Cleanup: Free device memory, pinned memory, and streams
     // ---------------------------------------------------------------------------------
-    free(h_trainImages);
-    free(h_trainLabels);
+    free(host_TrainImages);
+    free(host_TrainLabels);
     free(h_testImages);
     free(h_testLabels);
 
     for (int i = 0; i < NUM_BUFFERS; i++){
-        CudaCheck(cudaFree(d_trainImages[i]));
-        CudaCheck(cudaFree(d_labels[i]));
-        CudaCheck(cudaFreeHost(h_pinnedImages[i]));
-        CudaCheck(cudaFreeHost(h_pinnedLabels[i]));
+        CudaCheck(cudaFree(device_TrainImages[i]));
+        CudaCheck(cudaFree(device_Labels[i]));
+        CudaCheck(cudaFreeHost(host_PinnedImages[i]));
+        CudaCheck(cudaFreeHost(host_PinnedLabels[i]));
         CudaCheck(cudaStreamDestroy(stream[i]));
     }
 
