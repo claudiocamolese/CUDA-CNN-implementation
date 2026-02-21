@@ -39,6 +39,7 @@ class Tester:
             pred = model(img)
 
             if self.criterion is not None:
+                
                 if isinstance(self.criterion, CrossEntropyLoss):
                     label = label.view(-1).long()
 
@@ -53,6 +54,7 @@ class Tester:
         all_labels = torch.cat(all_labels)
 
         avg_loss = running_loss / num_batches if self.criterion is not None else None
+
         if avg_loss is not None:
             print(f"Test avg loss: {avg_loss:.6f}")
 

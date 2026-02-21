@@ -316,9 +316,9 @@ int main(int argc, char *argv[]) {
                 BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
             }
 
-            // --------------------
-            // Softmax + Cross-Entropy Loss
-            // --------------------
+            // -------------------------------
+            // Softmax + Cross Entropy Loss
+            // -------------------------------
             {
             int gridDim = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
             size_t sharedMemBytes = NUM_CLASSES * sizeof(float); // per expVals
@@ -523,7 +523,6 @@ int main(int argc, char *argv[]) {
             // Copy input images + labels
             // -------------------------------------------------
             CudaCheck(cudaMemcpy(device_TrainImages[0], &h_testImages[batch * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS], imageBytesPerBatch, cudaMemcpyHostToDevice));
-
             CudaCheck(cudaMemcpy(device_Labels[0], &h_testLabels[batch * BATCH_SIZE], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice));
 
             // -------------------------------------------------

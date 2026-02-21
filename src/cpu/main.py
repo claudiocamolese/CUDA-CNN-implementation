@@ -50,7 +50,6 @@ def main(args):
     device = args.device
     epoch = 5
     lr = 1e-2
-    print(args.numw)
 
     # Dataloader 
     train_loader = get_dataloader(dataset_name= args.dataset, train=True, num_workers=args.numw, pin_memory= args.pin)
@@ -86,7 +85,7 @@ def main(args):
         torch.cuda.synchronize()
     end_time = time.perf_counter()
 
-    print(f"Time for training {epoch} is: {end_time - start_time:.3f} s")
+    print(f"Time for testing is: {end_time - start_time:.3f} s")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

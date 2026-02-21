@@ -24,7 +24,7 @@
 /**
  * @brief Checks the result of a CUDA runtime call and exits on error.
  *
- * @param err The cudaError_t returned by a CUDA API call.
+ * @param err The cudaError_t returned by the CUDA API call.
  * @param msg Optional custom message describing the context of the call.
  */
 
@@ -34,7 +34,6 @@ inline void CudaCheck(cudaError_t err, const char* msg = "") {
         exit(EXIT_FAILURE);
     }
 }
-
 
 
 int main(int argc, char* argv[]) {
@@ -55,7 +54,7 @@ int main(int argc, char* argv[]) {
     }
 
     /* 
-        Load the dataset, mnist is the default one.
+        Load the dataset (MNIST or FASHION), MNIST is the default one.
     */
     std::string dataset = "mnist"; 
 
@@ -227,51 +226,52 @@ int main(int argc, char* argv[]) {
                 FORWARD PASS
             -----------------*/
 
-            int total, grid;
+            int total, gridDim;
 
             // Conv1 -> ReLU
             total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS; // total number of elements to be computed
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            ConvForward<<<grid, BLOCK_SIZE>>>(device_train_images, d_conv1W, d_conv1B, d_conv1Out,
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            ConvForward<<<gridDim, BLOCK_SIZE>>>(device_train_images, d_conv1W, d_conv1B, d_conv1Out,
                                             BATCH_SIZE, FIRST_INPUT_CHANNELS, FIRST_OUTPUT_CHANNELS,
                                             IMAGE_ROWS, IMAGE_COLS, FILTER_SIZE);
 
-            ReLUForward<<<grid, BLOCK_SIZE>>>(d_conv1Out, total);
+            ReLUForward<<<gridDim, BLOCK_SIZE>>>(d_conv1Out, total);
 
             // Conv2 -> ReLU
             total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * CONV2_OUT_ROWS * CONV2_OUT_COLS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            ConvForward<<<grid, BLOCK_SIZE>>>(d_conv1Out, d_conv2W, d_conv2B, d_conv2Out,
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            ConvForward<<<gridDim, BLOCK_SIZE>>>(d_conv1Out, d_conv2W, d_conv2B, d_conv2Out,
                                             BATCH_SIZE, SECOND_INPUT_CHANNELS, SECOND_OUTPUT_CHANNELS,
                                             CONV1_OUT_ROWS, CONV1_OUT_COLS, FILTER_SIZE);
 
-            ReLUForward<<<grid, BLOCK_SIZE>>>(d_conv2Out, total);
+            ReLUForward<<<gridDim, BLOCK_SIZE>>>(d_conv2Out, total);
 
             // MaxPool
             total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            MaxPoolForward<<<grid, BLOCK_SIZE>>>(d_conv2Out, d_poolOut, d_poolIdx, BATCH_SIZE, SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE);
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            MaxPoolForward<<<gridDim, BLOCK_SIZE>>>(d_conv2Out, d_poolOut, d_poolIdx, BATCH_SIZE, SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE);
 
             // Flatten Layer
             CudaCheck(cudaMemset(d_flat, 0, BATCH_SIZE*FLATTEN_SIZE*sizeof(float)));
             total = BATCH_SIZE*SECOND_OUTPUT_CHANNELS*POOL_OUT_ROWS*POOL_OUT_COLS;
-            grid = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
-            FlattenForward<<<grid,BLOCK_SIZE>>>(d_poolOut, d_flat, BATCH_SIZE, SECOND_OUTPUT_CHANNELS, POOL_OUT_ROWS, POOL_OUT_COLS);
+            gridDim = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
+            FlattenForward<<<gridDim,BLOCK_SIZE>>>(d_poolOut, d_flat, BATCH_SIZE, SECOND_OUTPUT_CHANNELS, POOL_OUT_ROWS, POOL_OUT_COLS);
 
             // Fully Connected Layer
             total = BATCH_SIZE*NUM_CLASSES;
-            grid = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
-            FullyConnectedForward<<<grid,BLOCK_SIZE>>>(d_flat, d_fcW, d_fcB, d_fcOut, BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
+            gridDim = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
+            FullyConnectedForward<<<gridDim,BLOCK_SIZE>>>(d_flat, d_fcW, d_fcB, d_fcOut, BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
 
             // Softmax
             total = BATCH_SIZE;
-            grid = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
-            SoftmaxCrossEntropyForward<<<grid, BLOCK_SIZE>>>(d_fcOut, device_labels, d_loss, d_prob, BATCH_SIZE, NUM_CLASSES);
+            gridDim = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
+            SoftmaxCrossEntropyForward<<<gridDim, BLOCK_SIZE>>>(d_fcOut, device_labels, d_loss, d_prob, BATCH_SIZE, NUM_CLASSES);
             
             // Compute batch loss on host
             float h_loss[BATCH_SIZE];
             float batchLoss = 0.0f;
 
+            // Update loss value
             CudaCheck(cudaMemcpy(h_loss, d_loss, BATCH_SIZE*sizeof(float), cudaMemcpyDeviceToHost));
             for(int i=0; i<BATCH_SIZE; i++) batchLoss += h_loss[i];
             epoch_loss += batchLoss / BATCH_SIZE;
@@ -304,47 +304,47 @@ int main(int argc, char* argv[]) {
 
             // Softmax + CrossEntropy
             total = BATCH_SIZE;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            SoftmaxCrossEntropyBackward<<<grid, BLOCK_SIZE>>>(d_grad_fcOut, d_prob, device_labels, BATCH_SIZE, NUM_CLASSES);
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            SoftmaxCrossEntropyBackward<<<gridDim, BLOCK_SIZE>>>(d_grad_fcOut, d_prob, device_labels, BATCH_SIZE, NUM_CLASSES);
 
             // Fully Connected Layer gradients (take in consideration both gradients weights and gradients bias)
             CudaCheck(cudaMemset(d_grad_fcW, 0, FLATTEN_SIZE * NUM_CLASSES * sizeof(float)));
             CudaCheck(cudaMemset(d_grad_fcB, 0, NUM_CLASSES * sizeof(float)));
             total = FLATTEN_SIZE * NUM_CLASSES + NUM_CLASSES;
-            grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            FullyConnectedLayerBackward<<<grid, BLOCK_SIZE>>>(d_grad_fcOut, d_flat, d_grad_fcW, d_grad_fcB,
+            gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            FullyConnectedLayerBackward<<<gridDim, BLOCK_SIZE>>>(d_grad_fcOut, d_flat, d_grad_fcW, d_grad_fcB,
                                                             BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
 
             // Gradient w.r.t. flattened input
             total = BATCH_SIZE * FLATTEN_SIZE;
-            grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            FullyConnectedBackward<<<grid, BLOCK_SIZE>>>(d_grad_fcOut, d_fcW, d_grad_flat,
+            gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            FullyConnectedBackward<<<gridDim, BLOCK_SIZE>>>(d_grad_fcOut, d_fcW, d_grad_flat,
                                                         BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
 
             // Unflatten to pooled shape
             total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            FlattenBackward<<<grid, BLOCK_SIZE>>>(d_grad_flat, d_grad_poolOut, BATCH_SIZE,
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            FlattenBackward<<<gridDim, BLOCK_SIZE>>>(d_grad_flat, d_grad_poolOut, BATCH_SIZE,
                                                 SECOND_OUTPUT_CHANNELS, POOL_OUT_ROWS, POOL_OUT_COLS, FLATTEN_SIZE);
 
             // MaxPool backward
-            cudaMemset(d_grad_conv2Out, 0, BATCH_SIZE * SECOND_OUTPUT_CHANNELS * CONV2_OUT_ROWS * CONV2_OUT_COLS * sizeof(float));
+            CudaCheck(cudaMemset(d_grad_conv2Out, 0, BATCH_SIZE * SECOND_OUTPUT_CHANNELS * CONV2_OUT_ROWS * CONV2_OUT_COLS * sizeof(float)));
             total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            MaxPoolBackward<<<grid, BLOCK_SIZE>>>(d_grad_poolOut, d_grad_conv2Out, d_poolIdx,
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            MaxPoolBackward<<<gridDim, BLOCK_SIZE>>>(d_grad_poolOut, d_grad_conv2Out, d_poolIdx,
                                                 BATCH_SIZE, SECOND_OUTPUT_CHANNELS, POOL_OUT_ROWS, POOL_OUT_COLS);
 
             // ReLU backward for conv2
             total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * CONV2_OUT_ROWS * CONV2_OUT_COLS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            ReLUBackward<<<grid, BLOCK_SIZE>>>(d_grad_conv2Out, d_conv2Out, d_grad_conv2Out, total);
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            ReLUBackward<<<gridDim, BLOCK_SIZE>>>(d_grad_conv2Out, d_conv2Out, d_grad_conv2Out, total);
 
            // Conv2 gradients (weights & bias)
-            cudaMemset(d_grad_conv2W, 0, conv2W_size * sizeof(float));
-            cudaMemset(d_grad_conv2B, 0, SECOND_OUTPUT_CHANNELS * sizeof(float));
+            CudaCheck(cudaMemset(d_grad_conv2W, 0, conv2W_size * sizeof(float)));
+            CudaCheck(cudaMemset(d_grad_conv2B, 0, SECOND_OUTPUT_CHANNELS * sizeof(float)));
             total = SECOND_OUTPUT_CHANNELS * FIRST_OUTPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + SECOND_OUTPUT_CHANNELS;
-            grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            ConvLayerBackward<<<grid, BLOCK_SIZE>>>(
+            gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            ConvLayerBackward<<<gridDim, BLOCK_SIZE>>>(
                 d_conv1Out,          // input to conv2
                 d_grad_conv2Out,     // grad w.r.t conv2 output
                 d_grad_conv2W,       // grad weights
@@ -361,8 +361,8 @@ int main(int argc, char* argv[]) {
 
             // Gradient w.r.t. conv1 output (input of conv2)
             total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            ConvBackward<<<grid, BLOCK_SIZE>>>(
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            ConvBackward<<<gridDim, BLOCK_SIZE>>>(
                 d_grad_conv2Out,     // grad w.r.t conv2 output
                 d_conv2W,            // conv2 weights
                 d_grad_conv1Out,     // grad w.r.t conv1 output
@@ -378,20 +378,15 @@ int main(int argc, char* argv[]) {
 
             // ReLU backward for conv1
             total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            ReLUBackward<<<grid, BLOCK_SIZE>>>(
-                d_grad_conv1Out,
-                d_conv1Out,
-                d_grad_conv1Out,
-                total
-            );
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            ReLUBackward<<<gridDim, BLOCK_SIZE>>>(d_grad_conv1Out, d_conv1Out, d_grad_conv1Out, total);
 
             // Conv1 gradients (weights & bias)
-            cudaMemset(d_grad_conv1W, 0, conv1W_size * sizeof(float));
-            cudaMemset(d_grad_conv1B, 0, FIRST_OUTPUT_CHANNELS * sizeof(float));
+            CudaCheck(cudaMemset(d_grad_conv1W, 0, conv1W_size * sizeof(float)));
+            CudaCheck(cudaMemset(d_grad_conv1B, 0, FIRST_OUTPUT_CHANNELS * sizeof(float)));
             total = FIRST_OUTPUT_CHANNELS * FIRST_INPUT_CHANNELS * FILTER_SIZE * FILTER_SIZE + FIRST_OUTPUT_CHANNELS;
-            grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            ConvLayerBackward<<<grid, BLOCK_SIZE>>>(
+            gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            ConvLayerBackward<<<gridDim, BLOCK_SIZE>>>(
                 device_train_images,      // input images
                 d_grad_conv1Out,     // grad w.r.t conv1 output
                 d_grad_conv1W,       // grad weights
@@ -408,8 +403,8 @@ int main(int argc, char* argv[]) {
 
             //  Gradient w.r.t. input images (optional)
             total = BATCH_SIZE * FIRST_INPUT_CHANNELS * IMAGE_ROWS * IMAGE_COLS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            ConvBackward<<<grid, BLOCK_SIZE>>>(
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            ConvBackward<<<gridDim, BLOCK_SIZE>>>(
                 d_grad_conv1Out,     // grad w.r.t conv1 output
                 d_conv1W,            // conv1 weights
                 d_grad_in,           // grad w.r.t input images
@@ -437,30 +432,30 @@ int main(int argc, char* argv[]) {
 
             // Conv1 parameters
             total = conv1W_size;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            SGDBackward<<<grid, BLOCK_SIZE>>>(d_conv1W, d_grad_conv1W, LEARNING_RATE, total);
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            SGDBackward<<<gridDim, BLOCK_SIZE>>>(d_conv1W, d_grad_conv1W, LEARNING_RATE, total);
 
             total = FIRST_OUTPUT_CHANNELS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            SGDBackward<<<grid, BLOCK_SIZE>>>(d_conv1B, d_grad_conv1B, LEARNING_RATE, total);
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            SGDBackward<<<gridDim, BLOCK_SIZE>>>(d_conv1B, d_grad_conv1B, LEARNING_RATE, total);
 
             // Conv2 parameters
             total = conv2W_size;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            SGDBackward<<<grid, BLOCK_SIZE>>>(d_conv2W, d_grad_conv2W, LEARNING_RATE, total);
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            SGDBackward<<<gridDim, BLOCK_SIZE>>>(d_conv2W, d_grad_conv2W, LEARNING_RATE, total);
 
             total = SECOND_OUTPUT_CHANNELS;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            SGDBackward<<<grid, BLOCK_SIZE>>>(d_conv2B, d_grad_conv2B, LEARNING_RATE, total);
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            SGDBackward<<<gridDim, BLOCK_SIZE>>>(d_conv2B, d_grad_conv2B, LEARNING_RATE, total);
 
             // Fully Connected Layer parameters
             total = FLATTEN_SIZE * NUM_CLASSES;
-            grid      = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            SGDBackward<<<grid, BLOCK_SIZE>>>(d_fcW, d_grad_fcW, LEARNING_RATE, total);
+            gridDim      = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            SGDBackward<<<gridDim, BLOCK_SIZE>>>(d_fcW, d_grad_fcW, LEARNING_RATE, total);
 
             total = NUM_CLASSES;
-            grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            SGDBackward<<<grid, BLOCK_SIZE>>>(d_fcB, d_grad_fcB, LEARNING_RATE, total);
+            gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            SGDBackward<<<gridDim, BLOCK_SIZE>>>(d_fcB, d_grad_fcB, LEARNING_RATE, total);
         }
         
         std::cout << "\n";
@@ -484,6 +479,7 @@ int main(int argc, char* argv[]) {
     // ---------------------------------------------------------------------------
     int correct = 0;
     int testBatches = TEST_IMAGES / BATCH_SIZE;
+    
     cudaEvent_t start_test, stop_test;
     cudaEventCreate(&start_test);
     cudaEventCreate(&stop_test);
@@ -498,78 +494,78 @@ int main(int argc, char* argv[]) {
                 &host_test_labels[b * BATCH_SIZE],
                 BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice));
 
-        int total, grid;
+        int total, gridDim;
 
         // Conv1 -> ReLU
         total = BATCH_SIZE * FIRST_OUTPUT_CHANNELS * CONV1_OUT_ROWS * CONV1_OUT_COLS;
-        grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        ConvForward<<<grid, BLOCK_SIZE>>>(device_train_images, d_conv1W, d_conv1B, d_conv1Out,
+        gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        ConvForward<<<gridDim, BLOCK_SIZE>>>(device_train_images, d_conv1W, d_conv1B, d_conv1Out,
                                         BATCH_SIZE, FIRST_INPUT_CHANNELS, FIRST_OUTPUT_CHANNELS,
                                         IMAGE_ROWS, IMAGE_COLS, FILTER_SIZE);
 
-        ReLUForward<<<grid, BLOCK_SIZE>>>(d_conv1Out, total);
+        ReLUForward<<<gridDim, BLOCK_SIZE>>>(d_conv1Out, total);
 
 
         // Conv2 -> ReLU
         total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * CONV2_OUT_ROWS * CONV2_OUT_COLS;
-        grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        ConvForward<<<grid, BLOCK_SIZE>>>(d_conv1Out, d_conv2W, d_conv2B, d_conv2Out,
+        gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        ConvForward<<<gridDim, BLOCK_SIZE>>>(d_conv1Out, d_conv2W, d_conv2B, d_conv2Out,
                                         BATCH_SIZE, SECOND_INPUT_CHANNELS, SECOND_OUTPUT_CHANNELS,
                                         CONV1_OUT_ROWS, CONV1_OUT_COLS, FILTER_SIZE);
 
-        ReLUForward<<<grid, BLOCK_SIZE>>>(d_conv2Out, total);
+        ReLUForward<<<gridDim, BLOCK_SIZE>>>(d_conv2Out, total);
 
 
         // MaxPool
         total = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
-        grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        MaxPoolForward<<<grid, BLOCK_SIZE>>>(d_conv2Out, d_poolOut, d_poolIdx,
+        gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        MaxPoolForward<<<gridDim, BLOCK_SIZE>>>(d_conv2Out, d_poolOut, d_poolIdx,
                                             BATCH_SIZE, SECOND_OUTPUT_CHANNELS,
                                             CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE);
 
 
         // Flatten
-        FlattenForward<<<grid, BLOCK_SIZE>>>(d_poolOut, d_flat,
+        FlattenForward<<<gridDim, BLOCK_SIZE>>>(d_poolOut, d_flat,
                                             BATCH_SIZE, SECOND_OUTPUT_CHANNELS,
                                             POOL_OUT_ROWS, POOL_OUT_COLS);
 
 
         // Fully connected
         total = BATCH_SIZE * NUM_CLASSES;
-        grid  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        FullyConnectedForward<<<grid, BLOCK_SIZE>>>(d_flat, d_fcW, d_fcB, d_fcOut,
-                                                    BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
+        gridDim  = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        FullyConnectedForward<<<gridDim, BLOCK_SIZE>>>(d_flat, d_fcW, d_fcB, d_fcOut, BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
 
 
         // Softmax
         total = BATCH_SIZE;
-        grid = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        SoftmaxCrossEntropyForward<<<grid, BLOCK_SIZE>>>(d_fcOut, device_labels, d_loss, d_prob,
-                                                        BATCH_SIZE, NUM_CLASSES);
+        gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        SoftmaxCrossEntropyForward<<<gridDim, BLOCK_SIZE>>>(d_fcOut, device_labels, d_loss, d_prob, BATCH_SIZE, NUM_CLASSES);
 
 
         // Copy prediction on host
-        float* h_prob = (float*)malloc(BATCH_SIZE * NUM_CLASSES * sizeof(float));
-        CudaCheck(cudaMemcpy(h_prob, d_prob, BATCH_SIZE * NUM_CLASSES * sizeof(float), cudaMemcpyDeviceToHost));
+        float* host_prob = (float*)malloc(BATCH_SIZE * NUM_CLASSES * sizeof(float));
+        CudaCheck(cudaMemcpy(host_prob, d_prob, BATCH_SIZE * NUM_CLASSES * sizeof(float), cudaMemcpyDeviceToHost));
 
-        int* h_lbl = (int*)malloc(BATCH_SIZE * sizeof(int));
-        memcpy(h_lbl, &host_test_labels[b * BATCH_SIZE], BATCH_SIZE * sizeof(int));
+        int* host_labels = (int*)malloc(BATCH_SIZE * sizeof(int));
+        memcpy(host_labels, &host_test_labels[b * BATCH_SIZE], BATCH_SIZE * sizeof(int));
 
         // Count correct predictions
-        for(int i = 0; i < BATCH_SIZE; i++) {
+        for(int batch = 0; batch < BATCH_SIZE; batch++) {
+            
             int pred = 0;
-            float maxp = h_prob[i * NUM_CLASSES];
-            for(int c = 1; c < NUM_CLASSES; c++) {
-                if(h_prob[i * NUM_CLASSES + c] > maxp) {
-                    maxp = h_prob[i * NUM_CLASSES + c];
-                    pred = c;
+            float max_prop = host_prob[batch * NUM_CLASSES];
+            
+            for(int classes = 1; classes < NUM_CLASSES; classes++) {
+                if(host_prob[batch * NUM_CLASSES + classes] > max_prop) {
+                    max_prop = host_prob[batch * NUM_CLASSES + classes];
+                    pred = classes;
                 }
             }
-            if(pred == h_lbl[i]) correct++;
+            if(pred == host_labels[batch]) correct++;
         }
 
-        free(h_prob);
-        free(h_lbl);
+        free(host_prob);
+        free(host_labels);
     }
 
     // Compute accuracy

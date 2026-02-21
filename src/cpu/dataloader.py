@@ -35,6 +35,7 @@ def get_dataloader(num_workers, dataset_name, train=True, batch_size=64, pin_mem
         requested dataset split.
     """
     dataset_cls = DATASETS.get(dataset_name.lower())
+    
     if dataset_cls is None:
         raise ValueError(f"Unknown dataset {dataset_name}")
 

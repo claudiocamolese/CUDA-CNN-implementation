@@ -28,11 +28,11 @@ void SoftmaxCrossEntropyBackward(float* grad_logits, const float* prob, const in
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if(idx >= batch_size * num_classes) return;
     int sampleIdx = idx / num_classes;
-    int c = idx % num_classes;
+    int classes = idx % num_classes;
     int lbl = labels[sampleIdx];
 
     float p = prob[idx];
-    float y = (c == lbl) ? 1.0f : 0.0f;
+    float y = (classes == lbl) ? 1.0f : 0.0f;
     grad_logits[idx] = p - y;
 }
 
