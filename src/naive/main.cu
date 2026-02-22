@@ -579,7 +579,6 @@ int main(int argc, char* argv[]) {
     cudaEventElapsedTime(&elapsedTime_test, start_test, stop_test);
     printf("Time for testing is: %.2f s\n", elapsedTime_test / 1000.f);
 
-
     // Free memory
     free(host_train_images);
     free(host_test_images);

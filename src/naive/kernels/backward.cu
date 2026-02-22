@@ -7,7 +7,7 @@
  * Computes the gradient with respect to the output logits:
  *
  * \f[
- * \frac{\partial L}{\partial z_c} = p_c - y_c
+ * \frac{\partial L}{\partial z_c} = p_c - ground_truth
  * \f]
  *
  * where:
@@ -29,11 +29,11 @@ void SoftmaxCrossEntropyBackward(float* grad_logits, const float* prob, const in
     if(idx >= batch_size * num_classes) return;
     int sampleIdx = idx / num_classes;
     int classes = idx % num_classes;
-    int lbl = labels[sampleIdx];
+    int label = labels[sampleIdx];
 
     float p = prob[idx];
-    float y = (classes == lbl) ? 1.0f : 0.0f;
-    grad_logits[idx] = p - y;
+    float ground_truth = (classes == label) ? 1.0f : 0.0f;
+    grad_logits[idx] = p - ground_truth;
 }
 
 /**
@@ -77,7 +77,7 @@ void SoftmaxCrossEntropyBackward(float* grad_logits, const float* prob, const in
  *   by exactly one thread
  */
 __global__
-void FullyConnectedLayerBackward(const float* grad_out, const float* in, float* gradW, float* gradB, int batch_size, int num_classes, int flatten_size){
+void FullyConnectedLayerBackward(const float* grad_out, const float* input_fc, float* gradW, float* gradB, int batch_size, int num_classes, int flatten_size){
     // Each thread handles one element in [FLATTEN_SIZE*NUM_CLASSES] for gradW
     // or up to NUM_CLASSES for gradB. We'll handle them separately:
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -88,23 +88,24 @@ void FullyConnectedLayerBackward(const float* grad_out, const float* in, float* 
 
     if(idx < totalW) {
         // gradW
-        int k = idx / num_classes;   // which input index
-        int c = idx % num_classes;   // which class
+        int featuresIdx = idx / num_classes;   // which input index
+        int classes = idx % num_classes;   // which class
         float sumVal = 0.0f;
-        for(int b=0; b<batch_size; b++){
-            float go = grad_out[b*num_classes + c];
-            float inp = in[b*flatten_size + k];
-            sumVal += inp * go;
+        
+        for(int batch = 0; batch < batch_size; batch++){
+            float grad_output = grad_out[batch * num_classes + classes];
+            float input = input_fc[batch * flatten_size + featuresIdx];
+            sumVal += input * grad_output;
         }
         gradW[idx] = sumVal;
     } else {
         // gradB
-        int c = idx - totalW;
+        int classes = idx - totalW;
         float sumVal = 0.0f;
-        for(int b=0; b<batch_size; b++){
-            sumVal += grad_out[b*num_classes + c];
+        for(int batch = 0; batch < batch_size; batch++){
+            sumVal += grad_out[batch * num_classes + classes];
         }
-        gradB[c] = sumVal;
+        gradB[classes] = sumVal;
     }
 }
 
@@ -146,10 +147,7 @@ void FullyConnectedLayerBackward(const float* grad_out, const float* in, float* 
  * - This kernel assumes NUM_CLASSES and FLATTEN_SIZE are compile-time constants
  */
 __global__
-void FullyConnectedBackward(const float* gradOut,
-                            const float* w,
-                            float* gradIn,
-                            int batch_size, int num_classes, int flatten_size)
+void FullyConnectedBackward(const float* gradOut, const float* w, float* gradIn, int batch_size, int num_classes, int flatten_size)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = batch_size * flatten_size;
@@ -157,13 +155,12 @@ void FullyConnectedBackward(const float* gradOut,
     if (idx >= total)
         return;
 
-    int b = idx / flatten_size;   // batch index
-    int k = idx % flatten_size;   // input feature index
+    int batchIdx = idx / flatten_size;   // batch index
+    int featuresIdx = idx % flatten_size;   // input feature index
 
     float sumVal = 0.0f;
-    for (int c = 0; c < num_classes; c++) {
-        sumVal += gradOut[b * num_classes + c] *
-                  w[k * num_classes + c];
+    for (int classes = 0; classes < num_classes; classes++) {
+        sumVal += gradOut[batchIdx * num_classes + classes] * w[featuresIdx * num_classes + classes];
     }
 
     gradIn[idx] = sumVal;
@@ -186,26 +183,24 @@ void FullyConnectedBackward(const float* gradOut,
  * @param[in]  batchSize   Number of samples in the batch
  */
 __global__
-void FlattenBackward(const float* gradFlat,
-                          float* gradPoolOut,
-                          int batchSize, int num_filters, int pool_out_rows, int pool_out_cols, int flatten_size)
-{{
+void FlattenBackward(const float* gradFlat, float* gradPoolOut, int batchSize, int num_filters, int pool_out_rows, int pool_out_cols, int flatten_size)
+{
     // Inverse of flatten: [B, FLATTEN_SIZE] -> [B, NUM_FILTERS, 12, 12]
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = batchSize * num_filters * pool_out_rows * pool_out_cols;
     if(idx >= total) return;
 
-    int b = idx / (num_filters * pool_out_rows * pool_out_cols);
-    int rem = idx % (num_filters * pool_out_rows * pool_out_cols);
-    int f = rem / (pool_out_rows * pool_out_cols);
-    int rem2 = rem % (pool_out_rows * pool_out_cols);
-    int r = rem2 / pool_out_cols;
-    int c = rem2 % pool_out_cols;
+    int batchIdx = idx / (num_filters * pool_out_rows * pool_out_cols);
+    int residual = idx % (num_filters * pool_out_rows * pool_out_cols);
+    int filter = residual / (pool_out_rows * pool_out_cols);
+    int residual2 = residual % (pool_out_rows * pool_out_cols);
+    int output_row = residual2 / pool_out_cols;
+    int output_col = residual2 % pool_out_cols;
 
-    int flatIdx = f*(pool_out_rows*pool_out_cols) + r*(pool_out_cols) + c;
-    gradPoolOut[idx] = gradFlat[b * flatten_size + flatIdx];
+    int flatIdx = filter * (pool_out_rows * pool_out_cols) + output_row * (pool_out_cols) + output_col;
+    gradPoolOut[idx] = gradFlat[batchIdx * flatten_size + flatIdx];
 }
-}
+
 
 
 
@@ -224,16 +219,15 @@ void FlattenBackward(const float* gradFlat,
  * - Uses atomicAdd because multiple pooled outputs may map to the same input
  */
 __global__
-void MaxPoolBackward(const float* gradOut, float* gradIn,
-                           const int* maxIdx, int batch_size, int num_filters, int pool_out_rows, int pool_out_cols)
+void MaxPoolBackward(const float* gradOut, float* gradIn, const int* maxIdx, int batch_size, int num_filters, int pool_out_rows, int pool_out_cols)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = batch_size * num_filters * pool_out_rows * pool_out_cols;
     if(idx >= total) return;
 
     float val = gradOut[idx];
-    int inPos = maxIdx[idx];
-    atomicAdd(&gradIn[inPos], val);
+    int input_pos = maxIdx[idx];
+    atomicAdd(&gradIn[input_pos], val);
 }
 
 
@@ -282,15 +276,7 @@ void ConvLayerBackward(
     const float* gradOut,      // [B, outChannels, outRows, outCols]
     float* gradW,              // [outChannels, inChannels, filterSize, filterSize]
     float* gradB,              // [outChannels]
-    int batchSize,
-    int inChannels,
-    int outChannels,
-    int inRows,
-    int inCols,
-    int outRows,
-    int outCols,
-    int filterSize
-)
+    int batchSize, int inChannels, int outChannels, int inRows, int inCols, int outRows, int outCols, int filterSize)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int totalParams = outChannels * inChannels * filterSize * filterSize + outChannels;
@@ -298,41 +284,37 @@ void ConvLayerBackward(
 
     if(idx < outChannels * inChannels * filterSize * filterSize) {
         int tmp = idx;
-        int f = tmp / (inChannels * filterSize * filterSize);
+        int filter = tmp / (inChannels * filterSize * filterSize);
         tmp = tmp % (inChannels * filterSize * filterSize);
-        int c = tmp / (filterSize * filterSize);
+        int channel = tmp / (filterSize * filterSize);
         tmp = tmp % (filterSize * filterSize);
-        int kr = tmp / filterSize;
-        int kc = tmp % filterSize;
+        int row_kernel = tmp / filterSize;
+        int col_kernel = tmp % filterSize;
 
         float sumVal = 0.0f;
+        
         for(int b = 0; b < batchSize; b++){
-            for(int orow = 0; orow < outRows; orow++){
-                for(int ocol = 0; ocol < outCols; ocol++){
-                    float g = gradOut[b*(outChannels*outRows*outCols)
-                                      + f*(outRows*outCols)
-                                      + orow*outCols + ocol];
-                    float inp = input[b*(inChannels*inRows*inCols)
-                                      + c*(inRows*inCols)
-                                      + (orow+kr)*inCols + (ocol+kc)];
-                    sumVal += g * inp;
+            for(int output_row = 0; output_row < outRows; output_row++){
+                for(int output_col = 0; output_col < outCols; output_col++){
+                    float grad_output = gradOut[b * (outChannels * outRows * outCols) + filter * (outRows * outCols) + output_row * outCols + output_col];
+                    float inp = input[b * (inChannels * inRows * inCols) + channel * (inRows * inCols) + (output_row + row_kernel) * inCols + (output_col + col_kernel)];
+                    sumVal += grad_output * inp;
                 }
             }
         }
         gradW[idx] = sumVal;
     } else {
-        int f = idx - outChannels * inChannels * filterSize * filterSize;
+        int filter = idx - outChannels * inChannels * filterSize * filterSize;
         float sumVal = 0.0f;
-        for(int b = 0; b < batchSize; b++){
-            for(int orow = 0; orow < outRows; orow++){
-                for(int ocol = 0; ocol < outCols; ocol++){
-                    sumVal += gradOut[b*(outChannels*outRows*outCols)
-                                      + f*(outRows*outCols)
-                                      + orow*outCols + ocol];
+
+        for(int batch = 0; batch < batchSize; batch++){
+            for(int output_row = 0; output_row < outRows; output_row++){
+                for(int output_col = 0; output_col < outCols; output_col++){
+                    sumVal += gradOut[batch * (outChannels*outRows*outCols) + filter * (outRows * outCols)+ output_row * outCols + output_col];
                 }
             }
         }
-        gradB[f] = sumVal;
+        gradB[filter] = sumVal;
     }
 }
 
@@ -351,42 +333,31 @@ void ConvLayerBackward(
 __global__
 void ConvBackward(
     const float* gradOut,  // [B, outChannels, outRows, outCols]
-    const float* w,        // [outChannels, inChannels, filterSize, filterSize]
+    const float* weight,   // [outChannels, inChannels, filterSize, filterSize]
     float* gradIn,         // [B, inChannels, inRows, inCols]
-    int batchSize,
-    int inChannels,
-    int outChannels,
-    int inRows,
-    int inCols,
-    int outRows,
-    int outCols,
-    int filterSize
-)
+    int batchSize, int inChannels, int outChannels, int inRows, int inCols, int outRows, int outCols, int filterSize)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = batchSize * inChannels * inRows * inCols;
     if(idx >= total) return;
 
-    int b = idx / (inChannels * inRows * inCols);
-    int rem = idx % (inChannels * inRows * inCols);
-    int c = rem / (inRows * inCols);
-    rem = rem % (inRows * inCols);
-    int r = rem / inCols;
-    int col = rem % inCols;
+    int batchIdx = idx / (inChannels * inRows * inCols);
+    int residual = idx % (inChannels * inRows * inCols);
+    int channel = residual / (inRows * inCols);
+    residual = residual % (inRows * inCols);
+    int row = residual / inCols;
+    int col = residual % inCols;
 
     float sumVal = 0.0f;
-    for(int f = 0; f < outChannels; f++){
-        for(int kr = 0; kr < filterSize; kr++){
-            for(int kc = 0; kc < filterSize; kc++){
-                int orow = r - kr;
-                int ocol = col - kc;
-                if(orow >=0 && orow < outRows && ocol >=0 && ocol < outCols){
-                    float gOutVal = gradOut[b*(outChannels*outRows*outCols)
-                                             + f*(outRows*outCols)
-                                             + orow*outCols + ocol];
-                    float wVal = w[f*(inChannels*filterSize*filterSize)
-                                   + c*(filterSize*filterSize)
-                                   + kr*filterSize + kc];
+    for(int filter = 0; filter < outChannels; filter++){
+        for(int row_kernel = 0; row_kernel < filterSize; row_kernel++){
+            for(int col_kernel = 0; col_kernel < filterSize; col_kernel++){
+                int output_row = row - row_kernel;
+                int output_col = col - col_kernel;
+                
+                if(output_row >= 0 && output_row < outRows && output_col >= 0 && output_col < outCols){
+                    float gOutVal = gradOut[batchIdx * (outChannels * outRows * outCols) + filter * (outRows * outCols) + output_row * outCols + output_col];
+                    float wVal = weight[filter * (inChannels* filterSize * filterSize) + channel * (filterSize * filterSize) + row_kernel * filterSize + col_kernel];
                     sumVal += gOutVal * wVal;
                 }
             }

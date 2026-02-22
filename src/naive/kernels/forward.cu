@@ -231,14 +231,10 @@ void FullyConnectedForward(const float* input_tensor, const float* w, const floa
  * - A probability distribution over classes for each sample
  * - The scalar cross entropy loss for each sample
  *
- * @param logits     Pointer to input logits
- *                   (shape: [batch_size, num_classes])
- * @param labels     Pointer to ground-truth labels
- *                   (shape: [batch_size])
- * @param outLoss    Pointer to output loss values
- *                   (shape: [batch_size])
- * @param PredProb    Pointer to output softmax probabilities
- *                   (shape: [batch_size, num_classes])
+ * @param logits     Pointer to input logits (shape: [batch_size, num_classes])
+ * @param labels     Pointer to ground-truth labels (shape: [batch_size])
+ * @param outLoss    Pointer to output loss values (shape: [batch_size])
+ * @param PredProb    Pointer to output softmax probabilities (shape: [batch_size, num_classes])
  * @param batchSize  Number of samples in the batch
  * @param num_classes Number of classes
  */
