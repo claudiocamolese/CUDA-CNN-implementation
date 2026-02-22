@@ -96,10 +96,11 @@ __global__ void FCForward(const float* in, const float* w, const float* b, float
         else
             Bs[threadIdx.y][threadIdx.x] = 0.0f;
 
+        __syncthreads();
         #pragma unroll
         for(int i=0; i<TILE_SIZE; i++)
             sum += As[threadIdx.y][i] * Bs[i][threadIdx.x];
-        
+        __syncthreads();
     }
 
     if(row < batchSize && col < outFeatures)
