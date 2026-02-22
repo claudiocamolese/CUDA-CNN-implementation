@@ -23,8 +23,7 @@
  * @param[in]  batch_size   Number of samples in the batch
  * @param[in]  num_classes  Number of classes
  */
-__global__
-void SoftmaxCrossEntropyBackward(float* grad_logits, const float* prob, const int* labels, int batch_size, int num_classes){
+__global__ void SoftmaxCrossEntropyBackward(float* grad_logits, const float* prob, const int* labels, int batch_size, int num_classes){
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if(idx >= batch_size * num_classes) return;
     int sampleIdx = idx / num_classes;
@@ -76,8 +75,7 @@ void SoftmaxCrossEntropyBackward(float* grad_logits, const float* prob, const in
  * - No atomic operations are required since each parameter is handled
  *   by exactly one thread
  */
-__global__
-void FullyConnectedLayerBackward(const float* grad_out, const float* input_fc, float* gradW, float* gradB, int batch_size, int num_classes, int flatten_size){
+__global__ void FullyConnectedLayerBackward(const float* grad_out, const float* input_fc, float* gradW, float* gradB, int batch_size, int num_classes, int flatten_size){
     // Each thread handles one element in [FLATTEN_SIZE*NUM_CLASSES] for gradW
     // or up to NUM_CLASSES for gradB. We'll handle them separately:
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -146,8 +144,7 @@ void FullyConnectedLayerBackward(const float* grad_out, const float* input_fc, f
  * - The kernel performs a reduction over the NUM_CLASSES dimension
  * - This kernel assumes NUM_CLASSES and FLATTEN_SIZE are compile-time constants
  */
-__global__
-void FullyConnectedBackward(const float* gradOut, const float* w, float* gradIn, int batch_size, int num_classes, int flatten_size)
+__global__ void FullyConnectedBackward(const float* gradOut, const float* w, float* gradIn, int batch_size, int num_classes, int flatten_size)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = batch_size * flatten_size;
@@ -182,8 +179,7 @@ void FullyConnectedBackward(const float* gradOut, const float* w, float* gradIn,
  * @param[out] gradPoolOut  Gradient w.r.t. pooled output feature maps
  * @param[in]  batchSize   Number of samples in the batch
  */
-__global__
-void FlattenBackward(const float* gradFlat, float* gradPoolOut, int batchSize, int num_filters, int pool_out_rows, int pool_out_cols, int flatten_size)
+__global__ void FlattenBackward(const float* gradFlat, float* gradPoolOut, int batchSize, int num_filters, int pool_out_rows, int pool_out_cols, int flatten_size)
 {
     // Inverse of flatten: [B, FLATTEN_SIZE] -> [B, NUM_FILTERS, 12, 12]
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -218,8 +214,7 @@ void FlattenBackward(const float* gradFlat, float* gradPoolOut, int batchSize, i
  * @note
  * - Uses atomicAdd because multiple pooled outputs may map to the same input
  */
-__global__
-void MaxPoolBackward(const float* gradOut, float* gradIn, const int* maxIdx, int batch_size, int num_filters, int pool_out_rows, int pool_out_cols)
+__global__ void MaxPoolBackward(const float* gradOut, float* gradIn, const int* maxIdx, int batch_size, int num_filters, int pool_out_rows, int pool_out_cols)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = batch_size * num_filters * pool_out_rows * pool_out_cols;
@@ -243,8 +238,7 @@ void MaxPoolBackward(const float* gradOut, float* gradIn, const int* maxIdx, int
  * @param[out] gradIn  Gradient w.r.t. ReLU input
  * @param[in]  n       Total number of elements
  */
-__global__
-void ReLUBackward(const float* gradOut, const float* x, float* gradIn, int n)
+__global__ void ReLUBackward(const float* gradOut, const float* x, float* gradIn, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < n){
@@ -270,8 +264,7 @@ void ReLUBackward(const float* gradOut, const float* x, float* gradIn, int n)
  * @note
  * - Each thread computes either one weight or one bias gradient
  */
-__global__
-void ConvLayerBackward(
+__global__ void ConvLayerBackward(
     const float* input,        // [B, inChannels, inRows, inCols]
     const float* gradOut,      // [B, outChannels, outRows, outCols]
     float* gradW,              // [outChannels, inChannels, filterSize, filterSize]
@@ -330,8 +323,7 @@ void ConvLayerBackward(
  * @param[out] gradIn      Gradient w.r.t. convolution input
  * @param[in]  batchSize  Number of samples in the batch
  */
-__global__
-void ConvBackward(
+__global__ void ConvBackward(
     const float* gradOut,  // [B, outChannels, outRows, outCols]
     const float* weight,   // [outChannels, inChannels, filterSize, filterSize]
     float* gradIn,         // [B, inChannels, inRows, inCols]
@@ -379,8 +371,7 @@ void ConvBackward(
  * @param[in]     lr    Learning rate
  * @param[in]     n     Number of parameters
  */
-__global__
-void SGDBackward(float* param, const float* grad, float lr, int n){
+__global__ void SGDBackward(float* param, const float* grad, float lr, int n){
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < n){
         param[i] -= lr * grad[i];

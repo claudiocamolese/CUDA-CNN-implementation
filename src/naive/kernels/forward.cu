@@ -18,8 +18,7 @@
  * @param inCols               Width of the input
  * @param filterSize           Size of the filter (assumes square filters)
  */
-__global__
-void ConvForward(const float* input_tensor, const float* weights, const float* bias, float* output_tensor, int batchSize, int inChannels, int outChannels, int inRows, int inCols, int filterSize){
+__global__ void ConvForward(const float* input_tensor, const float* weights, const float* bias, float* output_tensor, int batchSize, int inChannels, int outChannels, int inRows, int inCols, int filterSize){
     // dimension of the output without padding
     int outRows = inRows - filterSize + 1;
     int outCols = inCols - filterSize + 1;
@@ -70,8 +69,7 @@ void ConvForward(const float* input_tensor, const float* weights, const float* b
  * @param input_tensor         Pointer to the input tensor  [batchSize, inChannels, inRows, inCols]
  * @param n                    Number of elements in the input tensor
  */
-__global__
-void ReLUForward(float* input_tensor, int n){
+__global__ void ReLUForward(float* input_tensor, int n){
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < n){
@@ -95,8 +93,7 @@ void ReLUForward(float* input_tensor, int n){
  * @param inCols        Input width
  * @param poolSize      Pooling window size (assumes square)
  */
-__global__
-void MaxPoolForward(const float* input, float* output, int* maxIdx, int batchSize, int channels, int inRows, int inCols, int poolSize)
+__global__ void MaxPoolForward(const float* input, float* output, int* maxIdx, int batchSize, int channels, int inRows, int inCols, int poolSize)
 {
     int outRows = inRows / poolSize;
     int outCols = inCols / poolSize;
@@ -155,8 +152,7 @@ void MaxPoolForward(const float* input, float* output, int* maxIdx, int batchSiz
  * @param inRows                Number of rows per channel in the input tensor
  * @param inCols                Number of columns per channel in the input tensor
  */
-__global__
-void FlattenForward(const float* input_tensor, float* output_tensor, int batchSize, int inChannels, int inRows, int inCols)
+__global__ void FlattenForward(const float* input_tensor, float* output_tensor, int batchSize, int inChannels, int inRows, int inCols)
 {
     int total = batchSize * inChannels * inRows * inCols;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -194,8 +190,7 @@ void FlattenForward(const float* input_tensor, float* output_tensor, int batchSi
  * @param num_classes    Number of output classes (neurons)
  * @param flatten_size   Number of input features per sample
  */
-__global__
-void FullyConnectedForward(const float* input_tensor, const float* w, const float* b, float* output_tensor, int batch_size, int num_classes, int flattent_size){
+__global__ void FullyConnectedForward(const float* input_tensor, const float* w, const float* b, float* output_tensor, int batch_size, int num_classes, int flattent_size){
     
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     int total = batch_size * num_classes;
@@ -238,8 +233,7 @@ void FullyConnectedForward(const float* input_tensor, const float* w, const floa
  * @param batchSize  Number of samples in the batch
  * @param num_classes Number of classes
  */
-__global__
-void SoftmaxCrossEntropyForward(const float* logits, const int* labels, float* outLoss, float* PredProb, int batchSize, int num_classes)
+__global__ void SoftmaxCrossEntropyForward(const float* logits, const int* labels, float* outLoss, float* PredProb, int batchSize, int num_classes)
     {
 
         int i = blockIdx.x * blockDim.x + threadIdx.x;
