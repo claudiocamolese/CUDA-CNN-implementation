@@ -1,15 +1,9 @@
 #include <cuda_runtime.h>
 
 
-__global__
-void convReluKernel(const float* in, const float* w, const float* b,
-                    float* out, int batchSize,
-                    int inChannels, int inH, int inW,
-                    int outChannels, int kH, int kW,
-                    int outH, int outW,
-                    int stride=1, int padding=0)
+__global__ void ConvReluForward(const float* in, const float* w, const float* b, float* out, int batchSize, int inChannels, int inH, int inW, int outChannels, int kH, int kW, int outH, int outW, int stride=1, int padding=0)
 {
-    // coordinate globali
+    // compute global coordinates
     int out_x = blockIdx.x * blockDim.x + threadIdx.x;
     int out_y = blockIdx.y * blockDim.y + threadIdx.y;
     int batchIdx = blockIdx.z / outChannels;
@@ -19,17 +13,14 @@ void convReluKernel(const float* in, const float* w, const float* b,
 
     float result = 0.0f;
 
-    for (int c = 0; c < inChannels; c++){
+    for (int channel = 0; channel < inChannels; channel++){
         for (int i = 0; i < kH; i++){
             for (int j = 0; j < kW; j++){
                 int in_x = out_x * stride + j - padding;
                 int in_y = out_y * stride + i - padding;
                 if(in_x >= 0 && in_x < inW && in_y >= 0 && in_y < inH){
-                    float inVal = in[batchIdx * (inChannels * inH * inW)
-                                       + c * (inH * inW)
-                                       + in_y * inW + in_x];
-                    float wVal = w[filterIdx * (inChannels * kH * kW)
-                                   + c * (kH * kW) + i * kW + j];
+                    float inVal = in[batchIdx * (inChannels * inH * inW) + channel * (inH * inW) + in_y * inW + in_x];
+                    float wVal = w[filterIdx * (inChannels * kH * kW) + channel * (kH * kW) + i * kW + j];
                     result += inVal * wVal;
                 }
             }
@@ -41,17 +32,11 @@ void convReluKernel(const float* in, const float* w, const float* b,
     // ReLU
     if(result < 0.0f) result = 0.0f;
 
-    out[batchIdx * (outChannels * outH * outW)
-        + filterIdx * (outH * outW)
-        + out_y * outW + out_x] = result;
+    out[batchIdx * (outChannels * outH * outW) + filterIdx * (outH * outW) + out_y * outW + out_x] = result;
 }
 
 
-__global__
-void maxPoolFlattenKernel(const float* in, float* out,
-                          int batchSize,
-                          int inChannels, int inH, int inW,
-                          int poolSize, int outH, int outW)
+__global__ void MaxPoolFlattenForward(const float* in, float* out, int batchSize, int inChannels, int inH, int inW, int poolSize, int outH, int outW)
 {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int total = batchSize * inChannels * outH * outW;
@@ -85,10 +70,7 @@ void maxPoolFlattenKernel(const float* in, float* out,
 }
 
 
-__global__
-void fcForwardKernel(const float* in, const float* w, const float* b,
-                     float* out,
-                     int batchSize, int inFeatures, int outFeatures)
+__global__ void FCForward(const float* in, const float* w, const float* b, float* out, int batchSize, int inFeatures, int outFeatures)
 {
     const int TILE_SIZE = 16;
 
@@ -114,21 +96,17 @@ void fcForwardKernel(const float* in, const float* w, const float* b,
         else
             Bs[threadIdx.y][threadIdx.x] = 0.0f;
 
-        __syncthreads();
         #pragma unroll
         for(int i=0; i<TILE_SIZE; i++)
             sum += As[threadIdx.y][i] * Bs[i][threadIdx.x];
-        __syncthreads();
+        
     }
 
     if(row < batchSize && col < outFeatures)
         out[row * outFeatures + col] = sum + b[col];
 }
 
-__global__
-void softmaxCrossEntropyKernel(const float* logits, const int* labels,
-                               float* outLoss, float* outProb,
-                               int batchSize, int numClasses)
+__global__ void SoftmaxForward(const float* logits, const int* labels, float* outLoss, float* outProb, int batchSize, int numClasses)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i >= batchSize) return;

@@ -303,7 +303,7 @@ __global__ void ConvLayerBackward(
         for(int batch = 0; batch < batchSize; batch++){
             for(int output_row = 0; output_row < outRows; output_row++){
                 for(int output_col = 0; output_col < outCols; output_col++){
-                    sumVal += gradOut[batch * (outChannels*outRows*outCols) + filter * (outRows * outCols)+ output_row * outCols + output_col];
+                    sumVal += gradOut[batch * (outChannels * outRows * outCols) + filter * (outRows * outCols)+ output_row * outCols + output_col];
                 }
             }
         }

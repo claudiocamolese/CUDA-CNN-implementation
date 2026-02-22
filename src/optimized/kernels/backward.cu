@@ -1,12 +1,7 @@
 #include <cuda_runtime.h>
 
-// --------------------
-// Softmax + Cross-Entropy Backward
-// --------------------
-__global__
-void softmaxCrossEntropyBackwardKernel(float* gradLogits, const float* prob,
-                                       const int* labels,
-                                       int batchSize, int numClasses)
+
+__global__ void softmaxCrossEntropyBackwardKernel(float* gradLogits, const float* prob, const int* labels, int batchSize, int numClasses)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx >= batchSize * numClasses) return;
@@ -18,13 +13,8 @@ void softmaxCrossEntropyBackwardKernel(float* gradLogits, const float* prob,
     gradLogits[idx] = prob[idx] - y;
 }
 
-// --------------------
-// Fully Connected Backward (Weight + Bias)
-// --------------------
-__global__
-void fcBackwardGradParamKernel(const float* gradOut, const float* in,
-                               float* gradW, float* gradB,
-                               int batchSize, int inFeatures, int outFeatures)
+
+__global__ void fcBackwardGradParamKernel(const float* gradOut, const float* in, float* gradW, float* gradB, int batchSize, int inFeatures, int outFeatures)
 {
     const int TILE_SIZE = 16;
     int totalW = inFeatures * outFeatures;
@@ -63,13 +53,8 @@ void fcBackwardGradParamKernel(const float* gradOut, const float* in,
     }
 }
 
-// --------------------
-// Fully Connected Backward (Input Gradient)
-// --------------------
-__global__
-void fcBackwardGradInKernel(const float* gradOut, const float* w,
-                            float* gradIn, int batchSize,
-                            int inFeatures, int outFeatures)
+
+__global__ void fcBackwardGradInKernel(const float* gradOut, const float* w, float* gradIn, int batchSize, int inFeatures, int outFeatures)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx >= batchSize * inFeatures) return;
@@ -87,12 +72,8 @@ void fcBackwardGradInKernel(const float* gradOut, const float* w,
     gradIn[idx] = sumVal;
 }
 
-// --------------------
-// ReLU Backward
-// --------------------
-__global__
-void reluBackwardKernel(const float* gradOut, const float* x,
-                        float* gradIn, int n)
+
+__global__ void reluBackwardKernel(const float* gradOut, const float* x, float* gradIn, int n)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i<n){
@@ -101,15 +82,8 @@ void reluBackwardKernel(const float* gradOut, const float* x,
     }
 }
 
-// --------------------
-// Max Pooling Backward
-// --------------------
-__global__
-void maxPoolBackwardKernel(const float* convOut, const float* gradFlat,
-                           float* gradConvOut,
-                           int batchSize, int inChannels,
-                           int inH, int inW,
-                           int poolSize, int outH, int outW)
+
+__global__ void maxPoolBackwardKernel(const float* convOut, const float* gradFlat, float* gradConvOut, int batchSize, int inChannels, int inH, int inW, int poolSize, int outH, int outW)
 {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int total = batchSize * inChannels * outH * outW;
@@ -149,16 +123,8 @@ void maxPoolBackwardKernel(const float* convOut, const float* gradFlat,
     gradConvOut[b * (inChannels * inH * inW) + c * inH * inW + write_r * inW + write_c] = gradFlat[index];
 }
 
-// --------------------
-// Convolution Backward (Weights + Biases) GENERICO
-// --------------------
-__global__
-void convBackwardWeightKernel(const float* in, const float* gradConvOut,
-                              float* gradW, float* gradB,
-                              int batchSize,
-                              int inChannels, int inH, int inW,
-                              int outChannels, int kH, int kW,
-                              int outH, int outW)
+
+__global__ void convBackwardWeightKernel(const float* in, const float* gradConvOut, float* gradW, float* gradB, int batchSize, int inChannels, int inH, int inW, int outChannels, int kH, int kW, int outH, int outW)
 {
     int totalW = outChannels * inChannels * kH * kW;
     int totalParams = totalW + outChannels;
@@ -208,20 +174,9 @@ void convBackwardWeightKernel(const float* in, const float* gradConvOut,
     }
 }
 
-// --------------------
-// Convolution Backward Input GENERICO
-// --------------------
-__global__
-void convBackwardInputKernel(
-    const float* gradOut,
-    const float* w,
-    float* gradIn,
-    int batchSize,
-    int inChannels, int inH, int inW,
-    int outChannels,
-    int kH, int kW,
-    int outH, int outW
-){
+
+__global__ void convBackwardInputKernel(const float* gradOut, const float* w, float* gradIn, int batchSize, int inChannels, int inH, int inW, int outChannels, int kH, int kW, int outH, int outW)
+{
     int b = blockIdx.x;
     if(b >= batchSize) return;
 
@@ -263,11 +218,7 @@ void convBackwardInputKernel(
 }
 
 
-// --------------------
-// SGD Update
-// --------------------
-__global__
-void sgdUpdateKernel(float* param, const float* grad, float lr, int n){
+__global__ void sgdUpdateKernel(float* param, const float* grad, float lr, int n){
     int i = blockIdx.x*blockDim.x + threadIdx.x;
     if(i<n) param[i] -= lr*grad[i];
 }

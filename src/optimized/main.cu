@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* 
-        Load the dataset, mnist is the default one.
+        Load the dataset (MNIST or FASHION), MNIST is the default one.
     */
     std::string dataset = "mnist"; // default
 
@@ -275,7 +275,7 @@ int main(int argc, char *argv[]) {
 
             size_t SharedMemorySize = (16 + FILTER_SIZE - 1) * (16 + FILTER_SIZE - 1) * sizeof(float); // to reduce global memory acess
 
-            convReluKernel<<<gridDim, blockDim, SharedMemorySize, stream[CurrentBuffer]>>>(
+            ConvReluForward<<<gridDim, blockDim, SharedMemorySize, stream[CurrentBuffer]>>>(
                 device_TrainImages[CurrentBuffer], d_conv1W, d_conv1B, d_conv1Out, 
                 BATCH_SIZE, FIRST_INPUT_CHANNELS, IMAGE_ROWS, IMAGE_COLS,
                 FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV1_OUT_ROWS, CONV1_OUT_COLS);
@@ -288,7 +288,7 @@ int main(int argc, char *argv[]) {
 
             size_t SharedMemorySize = (16 + FILTER_SIZE - 1) * (16 + FILTER_SIZE - 1) * sizeof(float);
 
-            convReluKernel<<<gridDim, blockDim, SharedMemorySize, stream[CurrentBuffer]>>>(
+            ConvReluForward<<<gridDim, blockDim, SharedMemorySize, stream[CurrentBuffer]>>>(
                 d_conv1Out, d_conv2W, d_conv2B, d_conv2Out, 
                 BATCH_SIZE, SECOND_INPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS,
                 SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV2_OUT_ROWS, CONV2_OUT_COLS);
@@ -300,7 +300,7 @@ int main(int argc, char *argv[]) {
             int totalFlatten = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
             int gridDim = (totalFlatten + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-            maxPoolFlattenKernel<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
+            MaxPoolFlattenForward<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                 d_conv2Out, d_flat,
                 BATCH_SIZE,SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS);
             }
@@ -311,7 +311,7 @@ int main(int argc, char *argv[]) {
             dim3 gridDim((NUM_CLASSES + 16 - 1)/16, (BATCH_SIZE + 16 - 1)/16);
             int sharedMemBytes = 2 * (16*16) * sizeof(float);
 
-            fcForwardKernel<<<gridDim, blockDim, sharedMemBytes, stream[CurrentBuffer]>>>(
+            FCForward<<<gridDim, blockDim, sharedMemBytes, stream[CurrentBuffer]>>>(
                 d_flat, d_fcW, d_fcB, d_fcOut,
                 BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
             }
@@ -323,10 +323,9 @@ int main(int argc, char *argv[]) {
             int gridDim = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
             size_t sharedMemBytes = NUM_CLASSES * sizeof(float); // per expVals
 
-            softmaxCrossEntropyKernel<<<gridDim, BLOCK_SIZE, sharedMemBytes, stream[CurrentBuffer]>>>(
+            SoftmaxForward<<<gridDim, BLOCK_SIZE, sharedMemBytes, stream[CurrentBuffer]>>>(
                 d_fcOut, device_Labels[CurrentBuffer], d_loss, d_prob,
-                BATCH_SIZE, NUM_CLASSES
-            );
+                BATCH_SIZE, NUM_CLASSES);
             }
 
             // ---------------------------------------------------------------------------
@@ -442,22 +441,22 @@ int main(int argc, char *argv[]) {
             // SGD update (Conv1, Conv2, FC)
             // ---------------------------------------------------------------------------
             {
-                auto sgd = [&](float* p, float* g, int n){
+                auto SGD = [&](float* p, float* g, int n){
                     int grid = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
                     sgdUpdateKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(p, g, LEARNING_RATE, n);
                 };
 
                 // Conv1
-                sgd(d_conv1W, d_grad_conv1W, conv1W_size);
-                sgd(d_conv1B, d_grad_conv1B, FIRST_OUTPUT_CHANNELS);
+                SGD(d_conv1W, d_grad_conv1W, conv1W_size);
+                SGD(d_conv1B, d_grad_conv1B, FIRST_OUTPUT_CHANNELS);
 
                 // Conv2
-                sgd(d_conv2W, d_grad_conv2W, conv2W_size);
-                sgd(d_conv2B, d_grad_conv2B, SECOND_OUTPUT_CHANNELS);
+                SGD(d_conv2W, d_grad_conv2W, conv2W_size);
+                SGD(d_conv2B, d_grad_conv2B, SECOND_OUTPUT_CHANNELS);
 
                 // FC
-                sgd(d_fcW, d_grad_fcW, FLATTEN_SIZE * NUM_CLASSES);
-                sgd(d_fcB, d_grad_fcB, NUM_CLASSES);
+                SGD(d_fcW, d_grad_fcW, FLATTEN_SIZE * NUM_CLASSES);
+                SGD(d_fcB, d_grad_fcB, NUM_CLASSES);
             }
 
             if(batch + 1 < NUM_BATCHES){
@@ -533,7 +532,7 @@ int main(int argc, char *argv[]) {
             dim3 blockConv1(16, 16);
             dim3 gridConv1((CONV1_OUT_COLS + 15) / 16, (CONV1_OUT_ROWS + 15) / 16, BATCH_SIZE * FIRST_OUTPUT_CHANNELS);
 
-            convReluKernel<<<gridConv1, blockConv1>>>(
+            ConvReluForward<<<gridConv1, blockConv1>>>(
                 device_TrainImages[0], d_conv1W, d_conv1B, d_conv1Out,
                 BATCH_SIZE, FIRST_INPUT_CHANNELS, IMAGE_ROWS, IMAGE_COLS, FIRST_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV1_OUT_ROWS, CONV1_OUT_COLS, 1, 0);
 
@@ -541,7 +540,7 @@ int main(int argc, char *argv[]) {
             dim3 blockConv2(16, 16);
             dim3 gridConv2((CONV2_OUT_COLS + 15) / 16, (CONV2_OUT_ROWS + 15) / 16, BATCH_SIZE * SECOND_OUTPUT_CHANNELS);
 
-            convReluKernel<<<gridConv2, blockConv2>>>(
+            ConvReluForward<<<gridConv2, blockConv2>>>(
                 d_conv1Out, d_conv2W, d_conv2B, d_conv2Out,
                 BATCH_SIZE, SECOND_INPUT_CHANNELS, CONV1_OUT_ROWS, CONV1_OUT_COLS, SECOND_OUTPUT_CHANNELS, FILTER_SIZE, FILTER_SIZE, CONV2_OUT_ROWS, CONV2_OUT_COLS, 1, 0);
 
@@ -549,18 +548,18 @@ int main(int argc, char *argv[]) {
             int totalFlat = BATCH_SIZE * SECOND_OUTPUT_CHANNELS * POOL_OUT_ROWS * POOL_OUT_COLS;
             int gridFlat = (totalFlat + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-            maxPoolFlattenKernel<<<gridFlat, BLOCK_SIZE>>>(
+            MaxPoolFlattenForward<<<gridFlat, BLOCK_SIZE>>>(
                 d_conv2Out,d_flat,
                 BATCH_SIZE, SECOND_OUTPUT_CHANNELS, CONV2_OUT_ROWS, CONV2_OUT_COLS, POOL_SIZE, POOL_OUT_ROWS, POOL_OUT_COLS);
 
             // ---------- Fully Connected ----------
-            fcForwardKernel<<<gridDim, blockDim, fcSharedBytes>>>(
+            FCForward<<<gridDim, blockDim, fcSharedBytes>>>(
                 d_flat, d_fcW,d_fcB, d_fcOut, 
                 BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
 
             // ---------- Softmax ----------
             int gridSoft = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            softmaxCrossEntropyKernel<<<gridSoft, BLOCK_SIZE>>>(
+            SoftmaxForward<<<gridSoft, BLOCK_SIZE>>>(
                 d_fcOut, device_Labels[0], d_loss, d_prob,
                 BATCH_SIZE, NUM_CLASSES);
 

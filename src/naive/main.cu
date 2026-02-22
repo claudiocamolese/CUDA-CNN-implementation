@@ -259,12 +259,12 @@ int main(int argc, char* argv[]) {
 
             // Fully Connected Layer
             total = BATCH_SIZE*NUM_CLASSES;
-            gridDim = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
+            gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
             FullyConnectedForward<<<gridDim,BLOCK_SIZE>>>(d_flat, d_fcW, d_fcB, d_fcOut, BATCH_SIZE, NUM_CLASSES, FLATTEN_SIZE);
 
             // Softmax
             total = BATCH_SIZE;
-            gridDim = (total + BLOCK_SIZE - 1)/BLOCK_SIZE;
+            gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
             SoftmaxCrossEntropyForward<<<gridDim, BLOCK_SIZE>>>(d_fcOut, device_labels, d_loss, d_prob, BATCH_SIZE, NUM_CLASSES);
             
             // Compute batch loss on host
@@ -278,7 +278,7 @@ int main(int argc, char* argv[]) {
 
 
             // ---------------------------
-            // BACKWARD PASS
+            //      BACKWARD PASS
             // ---------------------------
 
             /*
@@ -420,7 +420,7 @@ int main(int argc, char* argv[]) {
 
 
             // ---------------------------
-            // UPDATE PARAMETERS
+            //     UPDATE PARAMETERS
             // ---------------------------
 
             /*
@@ -487,12 +487,8 @@ int main(int argc, char* argv[]) {
 
     for(int b = 0; b < testBatches; b++) {
         // Copia batch di immagini e label sul device
-        CudaCheck(cudaMemcpy(device_train_images,
-                &host_test_images[b * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS],
-                BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float), cudaMemcpyHostToDevice));
-        CudaCheck(cudaMemcpy(device_labels,
-                &host_test_labels[b * BATCH_SIZE],
-                BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice));
+        CudaCheck(cudaMemcpy(device_train_images, &host_test_images[b * BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS], BATCH_SIZE * IMAGE_ROWS * IMAGE_COLS * sizeof(float), cudaMemcpyHostToDevice));
+        CudaCheck(cudaMemcpy(device_labels, &host_test_labels[b * BATCH_SIZE], BATCH_SIZE * sizeof(int), cudaMemcpyHostToDevice));
 
         int total, gridDim;
 
