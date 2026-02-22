@@ -70,13 +70,14 @@ __global__ void ConvReluForward(const float* input, const float* w, const float*
     float result = 0.0f;
 
     for (int channel = 0; channel < inChannels; channel++){
-        for (int i = 0; i < kH; i++){
-            for (int j = 0; j < kW; j++){
-                int in_x = out_x * stride + j - padding;
-                int in_y = out_y * stride + i - padding;
+        for (int row_kernel = 0; row_kernel < kH; row_kernel++){
+            for (int col_kernel = 0; col_kernel < kW; col_kernel++){
+                int in_x = out_x * stride + col_kernel - padding;
+                int in_y = out_y * stride + row_kernel - padding;
+                
                 if(in_x >= 0 && in_x < inW && in_y >= 0 && in_y < inH){
                     float inVal = input[batchIdx * (inChannels * inH * inW) + channel * (inH * inW) + in_y * inW + in_x];
-                    float wVal = w[filterIdx * (inChannels * kH * kW) + channel * (kH * kW) + i * kW + j];
+                    float wVal = w[filterIdx * (inChannels * kH * kW) + channel * (kH * kW) + row_kernel * kW + col_kernel];
                     result += inVal * wVal;
                 }
             }
