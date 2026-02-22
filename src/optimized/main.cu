@@ -443,7 +443,7 @@ int main(int argc, char *argv[]) {
             {
                 auto SGD = [&](float* p, float* g, int n){
                     int grid = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-                    sgdUpdateKernel<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(p, g, LEARNING_RATE, n);
+                    SGDBackward<<<grid, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(p, g, LEARNING_RATE, n);
                 };
 
                 // Conv1

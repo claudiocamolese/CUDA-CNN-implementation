@@ -210,15 +210,11 @@ __global__ void convBackwardInputKernel(const float* gradOut, const float* w, fl
         }
     }
 
-    gradIn[
-        b * (inChannels * inH * inW)
-        + c * (inH * inW)
-        + r * inW + col
-    ] = sum;
+    gradIn[b * (inChannels * inH * inW) + c * (inH * inW) + r * inW + col] = sum;
 }
 
 
-__global__ void sgdUpdateKernel(float* param, const float* grad, float lr, int n){
-    int i = blockIdx.x*blockDim.x + threadIdx.x;
-    if(i<n) param[i] -= lr*grad[i];
+__global__ void SGDBackward(float* param, const float* grad, float lr, int n){
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i< n) param[i] -= lr * grad[i];
 }

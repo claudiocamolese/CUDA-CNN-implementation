@@ -37,4 +37,4 @@ void convBackwardInputKernel(const float* gradConvOut, const float* w,
                              int outChannels, int kH, int kW,
                              int outH, int outW);
 __global__
-void sgdUpdateKernel(float* param, const float* grad, float lr, int n);
+void SGDBackward(float* param, const float* grad, float lr, int n);
