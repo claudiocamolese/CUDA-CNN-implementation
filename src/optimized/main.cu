@@ -1,16 +1,69 @@
 /*
-    This code is an optimized implementation of a deep convolutional neural network.
+    This code implements a fully custom CUDA-based Convolutional Neural Network
+    optimized for GPU execution. No external deep learning libraries (cuDNN, cuBLAS)
+    are used; all kernels are written from scratch.
 
-    It is implemented entirely from scratch without using any deep learning libraries.
-    The network consists of two convolutional layers with ReLU activations, followed by
-    a max pooling layer, a flatten operation, a fully connected layer and a softmax
-    output for classification.
+    Network architecture:
+        (Conv + ReLU) →
+        (Conv + ReLU) →
+        MaxPool →
+        Flatten →
+        Fully Connected →
+        Softmax
 
-    The forward pass includes convolution, activation, pooling, flattening, and
-    fully connected computations, while the backward pass computes gradients for
-    all learnable parameters and propagates them through the network to update
-    weights and biases using stochastic gradient descent.
- */
+    ------------------------------------------------------------------------
+    Optimization Techniques Used
+    ------------------------------------------------------------------------
+
+    Kernel Fusion
+       - Convolution + ReLU are fused into a single kernel (ConvReluForward)
+         to reduce global memory traffic and eliminate intermediate writes.
+       - Softmax qnd Cross-Entropy loss are fused to avoid storing intermediate
+         softmax outputs and reduce memory bandwidth usage.
+
+    Tiled Matrix Multiplication (Fully Connected Layer)
+       - The FC layer uses a tiled GEMM implementation.
+       - Shared memory tiles (16x16) are used to improve memory reuse.
+       - Reduces redundant global memory accesses.
+       - Loop unrolling is applied to increase instruction-level parallelism.
+
+    Shared Memory Usage
+       - Used in convolution and FC kernels to cache tiles of data.
+       - Reduces global memory latency and improves bandwidth utilization.
+
+    Triple Buffering with CUDA Streams
+       - Three independent host-device buffers are used.
+       - cudaMemcpyAsync + cudaStream allow overlap of:
+            • CPU data preparation
+            • Host-to-device transfers
+            • GPU computation
+       - Minimizes GPU idle time.
+
+    Pinned (Page-Locked) Host Memory
+       - cudaMallocHost is used for faster and asynchronous transfers.
+
+    Asynchronous Execution Pipeline
+       - Data transfer and kernel execution occur in separate CUDA streams.
+       - Synchronization is only performed when strictly necessary.
+
+    Memory Coalescing Strategy
+       - Data is stored in contiguous row-major layout.
+       - Thread indexing ensures coalesced global memory accesses.
+
+    One-Thread-Per-Output Mapping
+       - Each thread computes one output element in convolution,
+         pooling, and FC layers.
+       - Eliminates race conditions and simplifies synchronization.
+
+    Numerical Stability in Softmax
+       - Maximum logit subtraction before exponentiation.
+       - Small epsilon added inside log to avoid log(0).
+       - Fast intrinsic __expf() used for performance.
+
+    Lightweight SGD Update Kernel
+        - Parameter updates performed directly on device.
+        - Avoids unnecessary host-device transfers.
+*/
 
 #include "config.h"
 #include "utils/load_data.h"
@@ -323,7 +376,7 @@ int main(int argc, char *argv[]) {
             int gridDim = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
             size_t sharedMemBytes = NUM_CLASSES * sizeof(float); // per expVals
 
-            SoftmaxForward<<<gridDim, BLOCK_SIZE, sharedMemBytes, stream[CurrentBuffer]>>>(
+            SoftmaxCrossForward<<<gridDim, BLOCK_SIZE, sharedMemBytes, stream[CurrentBuffer]>>>(
                 d_fcOut, device_Labels[CurrentBuffer], d_loss, d_prob,
                 BATCH_SIZE, NUM_CLASSES);
             }
@@ -335,7 +388,7 @@ int main(int argc, char *argv[]) {
                 int total = BATCH_SIZE * NUM_CLASSES;
                 int gridDim = (total + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-                softmaxCrossEntropyBackwardKernel<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
+                SoftmaxCrossBackward<<<gridDim, BLOCK_SIZE, 0, stream[CurrentBuffer]>>>(
                     d_grad_fcOut, d_prob, device_Labels[CurrentBuffer],
                     BATCH_SIZE, NUM_CLASSES);
             }
@@ -348,7 +401,7 @@ int main(int argc, char *argv[]) {
                 dim3 blockDim(32, 16);
                 dim3 gridDim((totalParams + 15) / 16);
 
-                fcBackwardGradParamKernel<<<gridDim, blockDim, 0, stream[CurrentBuffer]>>>(
+                FCParamBackward<<<gridDim, blockDim, 0, stream[CurrentBuffer]>>>(
                     d_grad_fcOut,d_flat, d_grad_fcW, d_grad_fcB,
                     BATCH_SIZE, FLATTEN_SIZE, NUM_CLASSES);
             }
@@ -559,7 +612,7 @@ int main(int argc, char *argv[]) {
 
             // ---------- Softmax ----------
             int gridSoft = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
-            SoftmaxForward<<<gridSoft, BLOCK_SIZE>>>(
+            SoftmaxCrossForward<<<gridSoft, BLOCK_SIZE>>>(
                 d_fcOut, device_Labels[0], d_loss, d_prob,
                 BATCH_SIZE, NUM_CLASSES);
 
@@ -570,22 +623,19 @@ int main(int argc, char *argv[]) {
             // -------------------------------------------------
             CudaCheck(cudaMemcpy(h_prob, d_prob, BATCH_SIZE * NUM_CLASSES * sizeof(float), cudaMemcpyDeviceToHost));
 
-            for (int i = 0; i < BATCH_SIZE; i++)
-            {
+            for (int batch = 0; batch < BATCH_SIZE; batch++){
                 int pred = 0;
-                float best = h_prob[i * NUM_CLASSES];
+                float best = h_prob[batch * NUM_CLASSES];
 
-                for (int c = 1; c < NUM_CLASSES; c++)
-                {
-                    float p = h_prob[i * NUM_CLASSES + c];
-                    if (p > best)
-                    {
-                        best = p;
-                        pred = c;
+                for (int classes = 1; classes < NUM_CLASSES; classes++){
+                    float prob = h_prob[batch * NUM_CLASSES + classes];
+                    if (prob > best){
+                        best = prob;
+                        pred = classes;
                     }
                 }
 
-                if (pred == h_testLabels[batch * BATCH_SIZE + i])
+                if (pred == h_testLabels[batch * BATCH_SIZE + batch])
                     correct++;
             }
         }

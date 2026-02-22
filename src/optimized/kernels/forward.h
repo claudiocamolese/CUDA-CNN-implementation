@@ -7,4 +7,4 @@ __global__ void MaxPoolFlattenForward(const float* in, float* out, int batchSize
 
 __global__ void FCForward(const float* in, const float* w, const float* b, float* out, int batchSize, int inFeatures, int outFeatures);
 
-__global__ void SoftmaxForward(const float* logits, const int* labels, float* outLoss, float* outProb, int batchSize, int numClasses);
+__global__ void SoftmaxCrossForward(const float* logits, const int* labels, float* outLoss, float* outProb, int batchSize, int numClasses);

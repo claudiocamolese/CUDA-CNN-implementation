@@ -3,13 +3,12 @@
 
 
 __global__
-void softmaxCrossEntropyBackwardKernel(float* gradLogits, const float* prob,
+void SoftmaxCrossBackward(float* gradLogits, const float* prob,
                                        const int* labels,
                                        int batchSize, int numClasses);
 __global__
-void fcBackwardGradParamKernel(const float* gradOut, const float* in,
-                               float* gradW, float* gradB,
-                               int batchSize, int inFeatures, int outFeatures);
+void FCParamBackward(const float* gradOut, const float* in, float* gradW, float* gradB, int batchSize, int inFeatures, int outFeatures);
+
 __global__
 void fcBackwardGradInKernel(const float* gradOut, const float* w,
                             float* gradIn, int batchSize,

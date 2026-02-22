@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 
 
-__global__ void softmaxCrossEntropyBackwardKernel(float* gradLogits, const float* prob, const int* labels, int batchSize, int numClasses)
+__global__ void SoftmaxCrossBackward(float* gradLogits, const float* prob, const int* labels, int batchSize, int numClasses)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx >= batchSize * numClasses) return;
@@ -14,7 +14,7 @@ __global__ void softmaxCrossEntropyBackwardKernel(float* gradLogits, const float
 }
 
 
-__global__ void fcBackwardGradParamKernel(const float* gradOut, const float* in, float* gradW, float* gradB, int batchSize, int inFeatures, int outFeatures)
+__global__ void FCParamBackward(const float* gradOut, const float* in, float* gradW, float* gradB, int batchSize, int inFeatures, int outFeatures)
 {
     const int TILE_SIZE = 16;
     int totalW = inFeatures * outFeatures;

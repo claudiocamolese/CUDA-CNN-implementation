@@ -16,25 +16,19 @@
  * Optimization Techniques Used
  * -------------------------
  *
- * 1. Kernel Fusion (Conv + Bias + ReLU):
- *    Convolution, bias addition, and ReLU activation are executed
- *    in a single kernel to:
+ * Kernel Fusion (Conv + Bias + ReLU):
+ *    Convolution, bias addition, and ReLU activation are executed in a single kernel to:
  *      - Reduce global memory traffic
  *      - Avoid intermediate tensor writes
  *      - Improve cache locality
  *      - Reduce kernel launch overhead
  *
- * 2. Output-Element Parallelization:
- *    Each thread computes exactly one output element
- *    (one pixel for one filter and one batch sample).
- *    This eliminates race conditions and synchronization overhead.
- *
- * 3. 3D Grid Mapping:
+ * 3D Grid Mapping:
  *    - blockIdx.x/y → spatial coordinates (outW, outH)
  *    - blockIdx.z   → encodes batch index and filter index
  *    This maximizes parallel coverage of output space.
  *
- * 4. Boundary Checks for Padding:
+ * Boundary Checks for Padding:
  *    Conditional checks avoid illegal memory accesses
  *    while implicitly implementing zero-padding.
  *
@@ -111,25 +105,21 @@ __global__ void ConvReluForward(const float* input, const float* w, const float*
  * Optimization Techniques Used
  * -------------------------
  *
- * 1. Kernel Fusion (MaxPool + Flatten):
+ * Kernel Fusion (MaxPool + Flatten):
  *    Pooling and flattening are combined into a single kernel.
  *    This:
  *      - Avoids an additional reshape kernel
  *      - Reduces global memory traffic
  *      - Eliminates intermediate writes
  *
- * 2. One-Thread-Per-Output Strategy:
- *    Each thread computes exactly one pooled output value.
- *    This removes synchronization requirements and race conditions.
- *
- * 3. Linear Index Decomposition:
+ * Linear Index Decomposition:
  *    A single linear thread index is decomposed into:
  *      - batch index (b)
  *      - channel index (c)
  *      - pooled spatial coordinates (output_row, cOut)
  *    This simplifies parallel mapping and guarantees full coverage.
  *
- * 4. Bounds Checking:
+ * Bounds Checking:
  *    Ensures safe memory access when input dimensions
  *    are not perfectly divisible by poolSize.
  *
@@ -167,10 +157,10 @@ __global__ void MaxPoolFlattenForward(const float* in, float* out, int batchSize
     for(int pool_row = 0; pool_row < poolSize; pool_row++){
         for(int pool_col = 0; pool_col < poolSize; pool_col++){
             
-            int cur_r = input_row + pool_row;
-            int cur_c = input_col + pool_col;
-            if(cur_r < inH && cur_c < inW){
-                float val = in[batchIdx * (inChannels * inH * inW) + channel * (inH * inW) + cur_r * inW + cur_c];
+            int rowIdx = input_row + pool_row;
+            int colIdx = input_col + pool_col;
+            if(rowIdx < inH && colIdx < inW){
+                float val = in[batchIdx * (inChannels * inH * inW) + channel * (inH * inW) + rowIdx * inW + colIdx];
                 if(val > maxVal) maxVal = val;
             }
         }
@@ -185,16 +175,6 @@ __global__ void MaxPoolFlattenForward(const float* in, float* out, int batchSize
  * @brief Performs the forward pass of a Fully Connected (Dense) layer
  *        using tiled matrix multiplication with shared memory.
  *
- * Computes:
- *
- * out = in × w + b
- *
- * Where:
- *  - in  : [batchSize, inFeatures]
- *  - w   : [inFeatures, outFeatures]
- *  - b   : [outFeatures]
- *  - out : [batchSize, outFeatures]
- *
  * Each thread computes a single output element:
  * out[row, col]
  *
@@ -202,31 +182,30 @@ __global__ void MaxPoolFlattenForward(const float* in, float* out, int batchSize
  * Optimization Techniques Used
  * -------------------------
  *
- * 1. Tiled Matrix Multiplication:
+ * Tiled Matrix Multiplication:
  *    The input matrix and weight matrix are divided into TILE_SIZE × TILE_SIZE submatrices (tiles).
  *    This reduces redundant global memory accesses.
  *
- * 2. Shared Memory Usage:
- *    Submatrices of 'in' and 'w' are loaded into shared memory
- *    (As and Bs) before computation.
+ * Shared Memory Usage:
+ *    Submatrices of 'in' and 'w' are loaded into shared memory (A and B) before computation.
  *    This:
  *      - Exploits fast on-chip memory
  *      - Improves memory bandwidth efficiency
  *      - Increases data reuse within a thread block
  *
- * 3. Cooperative Thread Loading:
+ * Cooperative Thread Loading:
  *    Threads within a block collaboratively load tiles into shared memory, maximizing memory coalescing.
  *
- * 4. Loop Tiling Over Input Features:
+ * Loop Tiling Over Input Features:
  *    The dot product is computed incrementally over tiles (numTiles), enabling scalability for large feature sizes.
  *
- * 5. Loop Unrolling:
+ *  Loop Unrolling:
  *    '#pragma unroll' reduces loop overhead and may improve instruction-level parallelism.
  *
- * 6. One-Thread-Per-Output-Element Strategy:
+ * One-Thread-Per-Output-Element Strategy:
  *    Each thread computes exactly one output element, eliminating race conditions and synchronization complexity beyond tile synchronization.
  *
- * 7. Boundary Handling:
+ * Boundary Handling:
  *    Conditional checks prevent out-of-bounds accesses when dimensions are not multiples of TILE_SIZE.
  *
  *
@@ -247,8 +226,8 @@ __global__ void FCForward(const float* in, const float* w, const float* b, float
     int row = blockIdx.y * TILE_SIZE + threadIdx.y; // batch
     int col = blockIdx.x * TILE_SIZE + threadIdx.x; // output feature
 
-    __shared__ float As[TILE_SIZE][TILE_SIZE];
-    __shared__ float Bs[TILE_SIZE][TILE_SIZE];
+    __shared__ float A[TILE_SIZE][TILE_SIZE];
+    __shared__ float B[TILE_SIZE][TILE_SIZE];
 
     float sum = 0.0f;
     int numTiles = (inFeatures + TILE_SIZE - 1)/TILE_SIZE;
@@ -257,21 +236,21 @@ __global__ void FCForward(const float* in, const float* w, const float* b, float
         int tiled_col = tile * TILE_SIZE + threadIdx.x;
         
         if(row < batchSize && tiled_col < inFeatures)
-            As[threadIdx.y][threadIdx.x] = in[row * inFeatures + tiled_col];
+            A[threadIdx.y][threadIdx.x] = in[row * inFeatures + tiled_col];
         else
-            As[threadIdx.y][threadIdx.x] = 0.0f;
+            A[threadIdx.y][threadIdx.x] = 0.0f;
 
         int tiled_row = tile * TILE_SIZE + threadIdx.y;
         
         if(tiled_row < inFeatures && col < outFeatures)
-            Bs[threadIdx.y][threadIdx.x] = w[tiled_row * outFeatures + col];
+            B[threadIdx.y][threadIdx.x] = w[tiled_row * outFeatures + col];
         else
-            Bs[threadIdx.y][threadIdx.x] = 0.0f;
+            B[threadIdx.y][threadIdx.x] = 0.0f;
 
         __syncthreads();
         #pragma unroll
         for(int tile = 0; tile < TILE_SIZE; tile++)
-            sum += As[threadIdx.y][tile] * Bs[tile][threadIdx.x];
+            sum += A[threadIdx.y][tile] * B[tile][threadIdx.x];
         __syncthreads();
     }
 
@@ -301,30 +280,30 @@ __global__ void FCForward(const float* in, const float* w, const float* b, float
  * Optimization Techniques Used
  * -------------------------
  *
- * 1. Kernel Fusion (Softmax + Cross-Entropy):
+ * Kernel Fusion (Softmax + Cross-Entropy):
  *    Softmax computation and cross-entropy loss are performed
  *    in a single kernel. This:
  *      - Eliminates intermediate global memory writes
  *      - Reduces memory bandwidth usage
  *      - Reduces kernel launch overhead
  *
- * 2. One-Thread-Per-Sample Strategy:
+ * One-Thread-Per-Sample Strategy:
  *    Each thread processes one batch element.
  *    This avoids inter-thread synchronization and ensures
  *    independence across samples.
  *
- * 3. Numerical Stability Trick:
+ * Numerical Stability Trick:
  *    The maximum logit is subtracted before exponentiation:
  *        exp(logit - maxLogit)
  *    This prevents overflow and improves floating-point stability.
  *
- * 4. Fast Approximate Exponential:
+ * Fast Approximate Exponential:
  *    Uses __expf() instead of expf() for faster computation on GPU, trading slight precision loss for performance.
  *
- * 5. In-Place Temporary Storage:
+ * In-Place Temporary Storage:
  *    The outProb buffer temporarily stores unnormalized exponentials before normalization, avoiding extra buffers.
  *
- * 6. Log Epsilon Protection:
+ * Log Epsilon Protection:
  *    A small constant (1e-10f) is added inside log() to prevent log(0) and improve numerical robustness.
  *
  *
@@ -337,7 +316,7 @@ __global__ void FCForward(const float* in, const float* w, const float* b, float
  *
  * @return void
  */
-__global__ void SoftmaxForward(const float* logits, const int* labels, float* outLoss, float* outProb, int batchSize, int numClasses)
+__global__ void SoftmaxCrossForward(const float* logits, const int* labels, float* outLoss, float* outProb, int batchSize, int numClasses)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i >= batchSize) return;
