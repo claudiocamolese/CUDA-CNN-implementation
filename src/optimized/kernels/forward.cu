@@ -126,7 +126,7 @@ __global__ void ConvReluForward(const float* input, const float* w, const float*
  *    A single linear thread index is decomposed into:
  *      - batch index (b)
  *      - channel index (c)
- *      - pooled spatial coordinates (rOut, cOut)
+ *      - pooled spatial coordinates (output_row, cOut)
  *    This simplifies parallel mapping and guarantees full coverage.
  *
  * 4. Bounds Checking:
@@ -152,24 +152,25 @@ __global__ void MaxPoolFlattenForward(const float* in, float* out, int batchSize
     int total = batchSize * inChannels * outH * outW;
     if(index >= total) return;
 
-    int b = index / (inChannels * outH * outW);
-    int rem = index % (inChannels * outH * outW);
-    int c = rem / (outH * outW);
-    int rem2 = rem % (outH * outW);
-    int rOut = rem2 / outW;
-    int cOut = rem2 % outW;
+    int batchIdx = index / (inChannels * outH * outW);
+    int residual = index % (inChannels * outH * outW);
+    int channel = residual / (outH * outW);
+    int residual2 = residual % (outH * outW);
+    int output_row = residual2 / outW;
+    int output_col = residual2 % outW;
 
-    int in_r = rOut * poolSize;
-    int in_c = cOut * poolSize;
+    int input_row = output_row * poolSize;
+    int input_col = output_col * poolSize;
 
     //int convStride = inW;
     float maxVal = -1e30f;
-    for(int i=0; i<poolSize; i++){
-        for(int j=0; j<poolSize; j++){
-            int cur_r = in_r + i;
-            int cur_c = in_c + j;
+    for(int pool_row = 0; pool_row < poolSize; pool_row++){
+        for(int pool_col = 0; pool_col < poolSize; pool_col++){
+            
+            int cur_r = input_row + pool_row;
+            int cur_c = input_col + pool_col;
             if(cur_r < inH && cur_c < inW){
-                float val = in[b * (inChannels * inH * inW) + c * (inH * inW) + cur_r * inW + cur_c];
+                float val = in[batchIdx * (inChannels * inH * inW) + channel * (inH * inW) + cur_r * inW + cur_c];
                 if(val > maxVal) maxVal = val;
             }
         }
@@ -252,23 +253,25 @@ __global__ void FCForward(const float* in, const float* w, const float* b, float
     float sum = 0.0f;
     int numTiles = (inFeatures + TILE_SIZE - 1)/TILE_SIZE;
 
-    for(int t=0; t<numTiles; t++){
-        int tiledCol = t * TILE_SIZE + threadIdx.x;
-        if(row < batchSize && tiledCol < inFeatures)
-            As[threadIdx.y][threadIdx.x] = in[row * inFeatures + tiledCol];
+    for(int tile = 0; tile < numTiles; tile++){
+        int tiled_col = tile * TILE_SIZE + threadIdx.x;
+        
+        if(row < batchSize && tiled_col < inFeatures)
+            As[threadIdx.y][threadIdx.x] = in[row * inFeatures + tiled_col];
         else
             As[threadIdx.y][threadIdx.x] = 0.0f;
 
-        int tiledRow = t * TILE_SIZE + threadIdx.y;
-        if(tiledRow < inFeatures && col < outFeatures)
-            Bs[threadIdx.y][threadIdx.x] = w[tiledRow * outFeatures + col];
+        int tiled_row = tile * TILE_SIZE + threadIdx.y;
+        
+        if(tiled_row < inFeatures && col < outFeatures)
+            Bs[threadIdx.y][threadIdx.x] = w[tiled_row * outFeatures + col];
         else
             Bs[threadIdx.y][threadIdx.x] = 0.0f;
 
         __syncthreads();
         #pragma unroll
-        for(int i=0; i<TILE_SIZE; i++)
-            sum += As[threadIdx.y][i] * Bs[i][threadIdx.x];
+        for(int tile = 0; tile < TILE_SIZE; tile++)
+            sum += As[threadIdx.y][tile] * Bs[tile][threadIdx.x];
         __syncthreads();
     }
 
@@ -341,27 +344,27 @@ __global__ void SoftmaxForward(const float* logits, const int* labels, float* ou
 
     int offset = i * numClasses;
 
-    // 1) max logit (stabilità numerica)
+    // max logit (stabilità numerica)
     float maxLogit = -1e30f;
-    for(int c = 0; c < numClasses; c++){
-        float v = logits[offset + c];
-        if(v > maxLogit) maxLogit = v;
+    for(int classes = 0; classes < numClasses; classes++){
+        float valthr = logits[offset + classes];
+        if(valthr > maxLogit) maxLogit = valthr;
     }
 
-    // 2) exp + sum
+    // exp + sum
     float sumExp = 0.0f;
-    for(int c = 0; c < numClasses; c++){
-        float ex = __expf(logits[offset + c] - maxLogit);
-        outProb[offset + c] = ex;   // temporaneo
-        sumExp += ex;
+    for(int classes = 0; classes < numClasses; classes++){
+        float exp = __expf(logits[offset + classes] - maxLogit);
+        outProb[offset + classes] = exp;  
+        sumExp += exp;
     }
 
-    // 3) normalizzazione
-    for(int c = 0; c < numClasses; c++)
-        outProb[offset + c] /= sumExp;
+    // normalizzazione
+    for(int classes = 0; classes < numClasses; classes++)
+        outProb[offset + classes] /= sumExp;
 
-    // 4) cross-entropy
-    int lbl = labels[i];
-    float p = outProb[offset + lbl];
-    outLoss[i] = -logf(p + 1e-10f);
+    // cross-entropy
+    int label = labels[i];
+    float prob = outProb[offset + label];
+    outLoss[i] = -logf(prob + 1e-10f);
 }
