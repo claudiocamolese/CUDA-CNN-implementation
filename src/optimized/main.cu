@@ -623,19 +623,19 @@ int main(int argc, char *argv[]) {
             // -------------------------------------------------
             CudaCheck(cudaMemcpy(h_prob, d_prob, BATCH_SIZE * NUM_CLASSES * sizeof(float), cudaMemcpyDeviceToHost));
 
-            for (int batch = 0; batch < BATCH_SIZE; batch++){
+            for (int batchIdx = 0; batchIdx < BATCH_SIZE; batchIdx++){
                 int pred = 0;
-                float best = h_prob[batch * NUM_CLASSES];
+                float best = h_prob[batchIdx * NUM_CLASSES];
 
                 for (int classes = 1; classes < NUM_CLASSES; classes++){
-                    float prob = h_prob[batch * NUM_CLASSES + classes];
+                    float prob = h_prob[batchIdx * NUM_CLASSES + classes];
                     if (prob > best){
                         best = prob;
                         pred = classes;
                     }
                 }
 
-                if (pred == h_testLabels[batch * BATCH_SIZE + batch])
+                if (pred == h_testLabels[batch * BATCH_SIZE + batchIdx])
                     correct++;
             }
         }
